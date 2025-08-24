@@ -226,8 +226,11 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
 
     except Exception as e:
         logger.error(f"Erro em tool_call: {e}")
-        return {
-            "tools": [
-                {"response1": "Desculpe, não consegui buscar os produtos no momento. Tente novamente em instantes."}
-            ]
+        # Retorna uma resposta de erro amigável e estruturada
+        error_response = {
+            "items": [],
+            "page": 1,
+            "has_more": False,
+            "error": "Desculpe, não consegui buscar os produtos no momento. Tente novamente em instantes."
         }
+        return {"tools": [error_response]}
