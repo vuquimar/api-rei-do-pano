@@ -9,7 +9,8 @@ services:
   - type: web
     name: tga-api-server
     env: docker
-    dockerfilePath: ./backend/Dockerfile # Caminho explícito para o Dockerfile
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
     plan: free # Define o plano do serviço web como gratuito
     healthCheckPath: /health
     envVars:
