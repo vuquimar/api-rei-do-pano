@@ -1,0 +1,32 @@
+# render.yaml
+# Documentação: https://render.com/docs/blueprint-spec
+
+services:
+  # 1. Banco de Dados PostgreSQL
+  - type: pgbouncer
+    name: tga-db
+    postgres:
+      name: tga-db-instance
+      version: "15"
+
+  # 2. Serviço Web (API Backend)
+  - type: web
+    name: tga-api-server
+    env: docker
+    plan: free # ou 'starter' para mais recursos
+    healthCheckPath: /health
+    envVars:
+      # URL do banco de dados provisionado pelo Render (automático)
+      - key: DATABASE_URL
+        fromService:
+          type: pgbouncer
+          name: tga-db
+          property: connectionString
+
+      # Variáveis de ambiente que você precisa configurar no Render
+      - key: API_BASE_URL
+        value: "https://api.tgasistemas.com.br"
+      - key: API_KEY
+        sync: false # Marcar como 'false' para segredos, para que não fiquem expostos
+      - key: SERVER_API_KEY
+        sync: false # Marcar como 'false' para segredos

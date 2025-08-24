@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+httpx
+apscheduler
+unidecode
+alembic
+gunicorn
+pytest
