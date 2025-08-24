@@ -12,11 +12,22 @@ from sqlalchemy import pool
 from alembic import context
 
 # Import your models' Base
-from models import Base, DATABASE_URL
+from models import Base
+import os # Adicionado para ler variáveis de ambiente
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Adicionado para ler a DATABASE_URL do ambiente e sobrescrever a configuração do alembic.ini
+# Esta é a correção definitiva para o problema de conexão no Render.
+database_url = os.getenv('DATABASE_URL')
+if database_url:
+    config.set_main_option('sqlalchemy.url', database_url)
+else:
+    # Se a variável de ambiente não estiver definida, usa a do alembic.ini (para desenvolvimento local)
+    pass
+
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -24,7 +35,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set the database URL from your application's settings
-config.set_main_option('sqlalchemy.url', DATABASE_URL)
+# config.set_main_option('sqlalchemy.url', DATABASE_URL) # This line is now redundant
 
 # add your model's MetaData object here
 # for 'autogenerate' support
