@@ -16,10 +16,9 @@ RUN adduser --disabled-password --gecos '' appuser && \
 
 USER appuser
 
-# Expõe a porta que o app vai rodar
+# Expõe a porta 8080 que o Gunicorn irá usar
 EXPOSE 8080
 
-# Comando para rodar a aplicação em produção
-# 1. Aplica as migrações do banco de dados
-# 2. Inicia o servidor Gunicorn com workers Uvicorn
+# Comando para rodar migrações e iniciar o servidor de produção
+# O 'sh -c' permite rodar múltiplos comandos. O '&&' garante que o gunicorn só rode se o alembic for bem-sucedido.
 CMD ["sh", "-c", "alembic upgrade head && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
