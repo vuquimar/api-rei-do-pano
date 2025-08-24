@@ -9,6 +9,7 @@ services:
   - type: web
     name: tga-api-server
     env: docker
+    dockerContext: ./backend # Define o diretório onde o Dockerfile está localizado
     plan: free # Define o plano do serviço web como gratuito
     healthCheckPath: /health
     envVars:
