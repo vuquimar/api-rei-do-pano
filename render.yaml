@@ -1,24 +1,21 @@
 # render.yaml
-# Documentação: https://render.com/docs/blueprint-spec
+# Documentação oficial: https://render.com/docs/blueprint-spec
 
-services:
-  # 1. Banco de Dados PostgreSQL
-  - type: psql
-    name: tga-db
+databases:
+  - name: tga-db
     databaseName: tga_store
     user: user
 
-  # 2. Serviço Web (API Backend)
+services:
+  # Serviço Web (API Backend)
   - type: web
     name: tga-api-server
     env: docker
     plan: free # ou 'starter' para mais recursos
     healthCheckPath: /health
     envVars:
-      # URL do banco de dados provisionado pelo Render (automático)
       - key: DATABASE_URL
-        fromService:
-          type: psql
+        fromDatabase:
           name: tga-db
           property: connectionString
 
