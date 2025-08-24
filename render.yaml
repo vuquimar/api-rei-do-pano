@@ -3,9 +3,8 @@
 
 services:
   # 1. Banco de Dados PostgreSQL
-  - type: db
+  - type: psql
     name: tga-db
-    databaseEngine: postgresql
     databaseName: tga_store
     user: user
 
@@ -19,7 +18,7 @@ services:
       # URL do banco de dados provisionado pelo Render (automático)
       - key: DATABASE_URL
         fromService:
-          type: db
+          type: psql
           name: tga-db
           property: connectionString
 
