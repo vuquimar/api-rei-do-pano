@@ -3,10 +3,11 @@
 
 services:
   # 1. Banco de Dados PostgreSQL
-  - type: postgres
+  - type: db
     name: tga-db
-    postgres:
-      version: "15"
+    databaseEngine: postgresql
+    databaseName: tga_store
+    user: user
 
   # 2. Serviço Web (API Backend)
   - type: web
@@ -18,7 +19,7 @@ services:
       # URL do banco de dados provisionado pelo Render (automático)
       - key: DATABASE_URL
         fromService:
-          type: postgres
+          type: db
           name: tga-db
           property: connectionString
 
@@ -26,6 +27,6 @@ services:
       - key: API_BASE_URL
         value: "https://api.tgasistemas.com.br"
       - key: API_KEY
-        sync: false # Marcar como 'false' para segredos, para que não fiquem expostos
+        sync: false
       - key: SERVER_API_KEY
-        sync: false # Marcar como 'false' para segredos
+        sync: false
