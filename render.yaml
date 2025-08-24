@@ -3,10 +3,9 @@
 
 services:
   # 1. Banco de Dados PostgreSQL
-  - type: pgbouncer
+  - type: postgres
     name: tga-db
     postgres:
-      name: tga-db-instance
       version: "15"
 
   # 2. Serviço Web (API Backend)
@@ -19,7 +18,7 @@ services:
       # URL do banco de dados provisionado pelo Render (automático)
       - key: DATABASE_URL
         fromService:
-          type: pgbouncer
+          type: postgres
           name: tga-db
           property: connectionString
 
