@@ -1,28 +1,25 @@
-# render.yaml
-# Documentação oficial: https://render.com/docs/blueprint-spec
-
 databases:
   - name: tga-db
     databaseName: tga_store
     user: user
+    plan: free # Define o plano do banco de dados como gratuito
 
 services:
   # Serviço Web (API Backend)
   - type: web
     name: tga-api-server
     env: docker
-    plan: free # ou 'starter' para mais recursos
+    plan: free # Define o plano do serviço web como gratuito
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: tga-db
+          name: tga-db # Conecta-se ao banco de dados definido acima
           property: connectionString
 
-      # Variáveis de ambiente que você precisa configurar no Render
       - key: API_BASE_URL
         value: "https://api.tgasistemas.com.br"
       - key: API_KEY
-        sync: false
+        sync: false # Não sincroniza com o repositório por segurança
       - key: SERVER_API_KEY
-        sync: false
+        sync: false # Não sincroniza com o repositório por segurança
