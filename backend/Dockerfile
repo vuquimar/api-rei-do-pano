@@ -19,6 +19,8 @@ USER appuser
 # Expõe a porta 8080 que o Gunicorn irá usar
 EXPOSE 8080
 
-# Comando para rodar migrações e iniciar o servidor de produção
-# O 'sh -c' permite rodar múltiplos comandos. O '&&' garante que o gunicorn só rode se o alembic for bem-sucedido.
-CMD ["sh", "-c", "alembic upgrade head && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
+# Comando final para produção:
+# 1. Aplica as migrações do Alembic para garantir que o schema do DB está atualizado.
+# 2. Executa o script de sincronização de produtos de forma bloqueante (one-off).
+# 3. Inicia o servidor Gunicorn com 4 workers Uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && python run_sync.py && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]

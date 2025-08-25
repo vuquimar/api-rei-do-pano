@@ -20,8 +20,6 @@ from unidecode import unidecode
 import re
 import os
 from dotenv import load_dotenv
-from contextlib import asynccontextmanager
-import threading
 
 # Importações locais corrigidas (sem o prefixo 'backend.')
 from models import Product, get_engine # Importa a nova função
@@ -50,30 +48,12 @@ logger.setLevel(logging.INFO)
 
 # Variáveis de Ambiente e Segurança
 SERVER_API_KEY = os.getenv("SERVER_API_KEY")
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key")
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Gerencia os eventos de inicialização e desligamento da aplicação.
-    """
-    logger.info("Iniciando servidor...")
-
-    # Cria e inicia uma thread para a sincronização inicial de produtos.
-    # `daemon=True` garante que esta thread não impeça o encerramento da aplicação.
-    sync_thread = threading.Thread(target=sync_products, daemon=True)
-    sync_thread.start()
-
-    logger.info("Servidor iniciado. Sincronização de produtos agendada em segundo plano.")
-    yield
-    logger.info("Servidor encerrado.")
-
+API_KEY_HEADER = APIKeyHeader(name="X-API-KEY")
 
 # Cria a instância da aplicação FastAPI com o novo lifespan
 app = FastAPI(
     title="MCP TGA Server",
     version="1.0.0",
-    lifespan=lifespan 
 )
 
 # Dependência de Autenticação
@@ -102,7 +82,7 @@ async def scheduled_sync():
     
 #     logger.info("Servidor MCP iniciado. Sincronização em segundo plano.")
 
-@app.get("/health")
+@app.get("/health", status_code=200)
 def health_check():
     """
     Verificação de saúde simples. Não depende do banco de dados.
