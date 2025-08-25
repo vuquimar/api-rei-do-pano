@@ -191,17 +191,20 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             and_clause = " AND ".join(where_clauses) if where_clauses else "1=0"
             sql_query = f"""
             WITH results AS (
-                SELECT *, 1.5 AS rank
+                -- 1. Peso MUITO ALTO para correspondências exatas de todos os tokens
+                SELECT *, 3.0 AS rank
                 FROM products
                 WHERE {and_clause}
                 UNION ALL
+                -- 2. Peso MÉDIO para relevância de texto completo
                 SELECT *, ts_rank(search_vector, plainto_tsquery('portuguese', :query)) AS rank
                 FROM products
                 WHERE search_vector @@ plainto_tsquery('portuguese', :query)
                 UNION ALL
+                -- 3. Peso BAIXO para erros de digitação, com limiar mais rígido
                 SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) AS rank
                 FROM products
-                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.15
+                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.2
             ),
             ranked_deduped AS (
                 SELECT "CODPRD", MAX(rank) as max_rank
