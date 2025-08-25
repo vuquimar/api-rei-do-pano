@@ -113,99 +113,39 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Preparar variações da busca para melhorar resultados
-        query_variations = []
+        # Abordagem simplificada: tokenize a consulta e busque cada palavra separadamente
+        tokens = query.lower().strip().split()
         
-        # Processar a query original
-        original_query = query.lower().strip()
-        query_variations.append(original_query)
+        if not tokens:
+            return {"items": [], "page": page, "has_more": False}
         
-        # Adicionar variação singular/plural
-        if original_query.endswith('s'):
-            # Plural para singular (ex: enxovais -> enxoval)
-            if original_query.endswith('is'):
-                query_variations.append(original_query[:-2] + 'l')  # enxovais -> enxoval
-            else:
-                query_variations.append(original_query[:-1])  # toalhas -> toalha
-        else:
-            # Singular para plural (ex: enxoval -> enxovais)
-            if original_query.endswith('l'):
-                query_variations.append(original_query[:-1] + 'is')  # enxoval -> enxovais
-            else:
-                query_variations.append(original_query + 's')  # toalha -> toalhas
+        # Construir a consulta SQL de forma simples e direta
+        search_conditions = []
+        params = {"page_size": page_size, "offset": offset}
         
-        # Busca combinada usando TODAS as estratégias para máxima cobertura
-        combined_query = text("""
-            WITH ranked_results AS (
-                -- Busca 1: Correspondência exata no nome (prioridade máxima)
-                SELECT 
-                    "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 
-                    10.0 as rank
-                FROM products
-                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE :exact_name_query
-                
-                UNION ALL
-                
-                -- Busca 2: Correspondência parcial no nome (alta prioridade)
-                SELECT 
-                    "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 
-                    5.0 as rank
-                FROM products
-                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE :partial_query
-                
-                UNION ALL
-                
-                -- Busca 3: Correspondência na descrição do grupo (prioridade média)
-                SELECT 
-                    "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 
-                    3.0 as rank
-                FROM products
-                WHERE immutable_unaccent(group_description) ILIKE :partial_query
-                
-                UNION ALL
-                
-                -- Busca 4: FTS para capturar variações linguísticas (prioridade normal)
-                SELECT 
-                    "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 
-                    1.0 as rank
-                FROM products, websearch_to_tsquery('portuguese', :query) query
-                WHERE query @@ search_vector
-            )
-            SELECT DISTINCT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", rank
-            FROM ranked_results
-            ORDER BY rank DESC, "NOMEFANTASIA" ASC
+        # Para cada token, adicionar uma condição de busca
+        for i, token in enumerate(tokens):
+            token_param = f"token_{i}"
+            params[token_param] = f"%{token}%"
+            
+            # Buscar no nome do produto ou na descrição do grupo
+            search_conditions.append(f"""(
+                immutable_unaccent("NOMEFANTASIA") ILIKE :{token_param} OR
+                immutable_unaccent(group_description) ILIKE :{token_param}
+            )""")
+        
+        # Construir a consulta final
+        where_clause = " AND ".join(search_conditions)
+        search_query = text(f"""
+            SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
+            FROM products
+            WHERE {where_clause}
+            ORDER BY "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
-        # Executar a consulta com todas as variações
-        results = db.execute(
-            combined_query, 
-            {
-                "query": original_query,
-                "exact_name_query": original_query,
-                "partial_query": f"%{original_query}%",
-                "page_size": page_size, 
-                "offset": offset
-            }
-        ).fetchall()
-        
-        # Se ainda não tiver resultados, tente com as variações
-        if not results and len(query_variations) > 1:
-            for variation in query_variations[1:]:
-                variation_results = db.execute(
-                    combined_query,
-                    {
-                        "query": variation,
-                        "exact_name_query": variation,
-                        "partial_query": f"%{variation}%",
-                        "page_size": page_size,
-                        "offset": offset
-                    }
-                ).fetchall()
-                
-                if variation_results:
-                    results = variation_results
-                    break
+        # Executar a consulta
+        results = db.execute(search_query, params).fetchall()
 
         items = [
             {
