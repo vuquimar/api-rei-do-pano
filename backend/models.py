@@ -20,6 +20,14 @@ engine = get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# Dependência para obter uma sessão de banco de dados
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 class Product(Base):
     __tablename__ = "products"
 

@@ -107,8 +107,8 @@ async def tool_call(
     db: Session = Depends(get_db), 
     api_key: str = Depends(get_api_key)
 ):
-    query = request.prompt
-    page = request.page
+    query = request.params.get("query", "").strip()
+    page = request.params.get("page", 1)
     page_size = 3
     offset = (page - 1) * page_size
 
