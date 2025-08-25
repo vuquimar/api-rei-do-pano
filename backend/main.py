@@ -158,50 +158,25 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                     ]
                 }
 
-            # Normaliza a busca e extrai tokens (palavras) úteis, removendo stopwords.
+            # Lógica de busca refinada
             query_clean = unidecode(query.lower())
-            stopwords = {
-                "de", "do", "da", "dos", "das", "o", "a", "os", "as", "com",
-                "um", "uma", "uns", "umas", "pra", "para", "ver", "quero",
-                "algum", "alguma", "alguns", "algumas", "vermos", "mostrar", "tem"
-            }
-            raw_tokens = [t.lower() for t in re.findall(r"[A-Za-zÀ-ÿ0-9]+", query)]
-            tokens = [t for t in raw_tokens if t not in stopwords and len(t) >= 2]
+            limit = 3 # Limite de produtos por página
+            offset = (page - 1) * limit
+            params = {"query": query_clean, "limit": limit, "offset": offset}
 
-            if not tokens and len(query_clean) >= 2:
-                tokens = [query_clean]
-
-            # Constrói cláusulas de busca para cada token
-            where_clauses = []
-            params = {
-                "query": query,
-                "limit": 4,  # Busca um extra para saber se há mais páginas
-                "offset": (page - 1) * 3
-            }
-            for i, token in enumerate(tokens):
-                param_name = f"t{i}"
-                main_token = token[:-1] if token.endswith("s") and len(token) > 3 else token
-                params[param_name] = f"%{main_token}%"
-                where_clauses.append(f'immutable_unaccent("NOMEFANTASIA") ILIKE :{param_name}')
-
-            # Query SQL com CTEs para combinar estratégias e rankear resultados
-            # 1. Busca por correspondência de todos os tokens (rank alto)
-            # 2. Busca por texto completo (rank de relevância)
-            # 3. Busca por similaridade (rank para erros de digitação)
-            and_clause = " AND ".join(where_clauses) if where_clauses else "1=0"
+            # Nova consulta SQL: prioriza full-text search com um bônus de rank,
+            # e usa similaridade como fallback.
             sql_query = f"""
             WITH results AS (
-                -- 1. Peso MUITO ALTO para correspondências exatas de todos os tokens
-                SELECT *, 3.0 AS rank
-                FROM products
-                WHERE {and_clause}
-                UNION ALL
-                -- 2. Peso MÉDIO para relevância de texto completo
-                SELECT *, ts_rank(search_vector, plainto_tsquery('portuguese', :query)) AS rank
+                -- 1. Combina um peso base alto (3.0) com a relevância do full-text search
+                --    Isso garante que correspondências (com stemming) fiquem no topo e ordenadas.
+                SELECT *, 3.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query)) AS rank
                 FROM products
                 WHERE search_vector @@ plainto_tsquery('portuguese', :query)
+                
                 UNION ALL
-                -- 3. Peso BAIXO para erros de digitação, com limiar mais rígido
+
+                -- 2. Peso BAIXO para erros de digitação (similaridade), como fallback.
                 SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) AS rank
                 FROM products
                 WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.2
@@ -232,8 +207,8 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                     ]
                 }
 
-            has_more = len(results) == 4
-            page_items = results[:3]
+            has_more = len(results) == limit
+            page_items = results[:limit]
 
             # Resposta estruturada
             structured_response = {
