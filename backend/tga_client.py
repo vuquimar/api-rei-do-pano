@@ -58,7 +58,8 @@ def sync_products():
             logger.error("Variáveis de ambiente API_BASE_URL ou API_KEY não configuradas.")
             return
 
-        headers = {"Authorization": f"Bearer {api_key}"}
+        # Corrigido: Usa o cabeçalho 'X-API-Key' em vez de 'Authorization: Bearer'
+        headers = {"X-API-Key": api_key}
         # Corrigindo o endpoint para um padrão mais comum de API
         endpoint = f"{api_base_url}/v1/produtos" 
         
