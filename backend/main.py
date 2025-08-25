@@ -24,7 +24,8 @@ from contextlib import asynccontextmanager
 import threading
 
 # Importações locais corrigidas (sem o prefixo 'backend.')
-from models import Product, SessionLocal
+from models import Product, get_engine # Importa a nova função
+from sqlalchemy.orm import sessionmaker
 from tga_client import sync_products
 
 # =============== LOGS EM FORMATO JSON ===============
@@ -143,6 +144,11 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
     query = params.get("query", "").strip()
     page = max(1, params.get("page", 1))
 
+    # Cria uma nova sessão de DB para cada chamada, garantindo a conexão correta
+    engine = get_engine()
+    SessionLocal_request = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal_request()
+
     try:
         if tool_name == "search_products":
             if not query:
@@ -151,8 +157,6 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                         {"response1": "Por favor, informe um termo de busca."}
                     ]
                 }
-
-            db = SessionLocal()
 
             # Normaliza a busca e extrai tokens (palavras) úteis, removendo stopwords.
             query_clean = unidecode(query.lower())
