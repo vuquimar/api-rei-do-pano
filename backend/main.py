@@ -149,7 +149,7 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             if not query:
                 return {"tools": [{"items": [], "page": 1, "has_more": False}]}
 
-            # Lógica de busca robusta com ILIKE
+            # Lógica de busca com ILIKE e ranking explícito para máxima relevância
             query_clean = unidecode(query.lower())
             limit = 3
             offset = (page - 1) * limit
@@ -161,36 +161,47 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                 return {"tools": [{"items": [], "page": 1, "has_more": False}]}
 
             where_clauses = []
+            ranking_clauses = []
             params = {"limit": limit + 1, "offset": offset}
 
             for i, token in enumerate(tokens):
-                param_name = f"token_{i}"
-                params[param_name] = f"%{token}%"
+                singular_token = token[:-1] if token.endswith('s') and len(token) > 3 else token
                 
-                # Constrói a cláusula para o token atual
-                clause_parts = [
-                    f'immutable_unaccent("NOMEFANTASIA") ILIKE :{param_name}',
-                    f'immutable_unaccent(group_description) ILIKE :{param_name}'
-                ]
-                
-                # Tratamento simples de plural
-                if token.endswith('s') and len(token) > 3:
-                    singular_token = token[:-1]
-                    singular_param_name = f"singular_{i}"
-                    params[singular_param_name] = f"%{singular_token}%"
-                    clause_parts.append(f'immutable_unaccent("NOMEFANTASIA") ILIKE :{singular_param_name}')
-                    clause_parts.append(f'immutable_unaccent(group_description) ILIKE :{singular_param_name}')
+                # Parâmetros para ILIKE
+                params[f'p_like_{i}'] = f"%{token}%"
+                params[f's_like_{i}'] = f"%{singular_token}%"
+                params[f'p_start_{i}'] = f"{token}%"
+                params[f's_start_{i}'] = f"{singular_token}%"
 
-                where_clauses.append(f"({' OR '.join(clause_parts)})")
+                # Cláusula WHERE: precisa corresponder de alguma forma
+                where_clauses.append(f"""
+                    (immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} OR
+                     immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i} OR
+                     immutable_unaccent(group_description) ILIKE :p_like_{i} OR
+                     immutable_unaccent(group_description) ILIKE :s_like_{i})
+                """)
 
-            # Junta todas as cláusulas com AND para uma busca restritiva
+                # Cláusula de Ranking: atribui pontos com base na relevância
+                ranking_clauses.append(f"""
+                    (CASE
+                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_start_{i} THEN 1
+                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_start_{i} THEN 1
+                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i} THEN 2
+                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} THEN 2
+                        WHEN immutable_unaccent(group_description) ILIKE :s_like_{i} THEN 3
+                        WHEN immutable_unaccent(group_description) ILIKE :p_like_{i} THEN 3
+                        ELSE 4
+                    END)
+                """)
+            
             full_where_clause = " AND ".join(where_clauses)
+            full_ranking_logic = " + ".join(ranking_clauses)
 
             sql_query = f"""
                 SELECT *
                 FROM products
                 WHERE {full_where_clause}
-                ORDER BY "NOMEFANTASIA" ASC
+                ORDER BY ({full_ranking_logic}) ASC, "NOMEFANTASIA" ASC
                 LIMIT :limit OFFSET :offset;
             """
 
