@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from fastapi_another_jwt_auth.exceptions import AuthJWTException
 from backend.models import Product, SessionLocal
 from backend.tga_client import sync_products
+from contextlib import asynccontextmanager
+import threading
 
 load_dotenv()
 
@@ -48,7 +50,29 @@ logger.setLevel(logging.INFO)
 SERVER_API_KEY = os.getenv("SERVER_API_KEY")
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key")
 
-app = FastAPI(title="MCP Server - Loja TGA")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Gerencia os eventos de inicialização e desligamento da aplicação.
+    """
+    logger.info("Iniciando servidor...")
+
+    # Cria e inicia uma thread para a sincronização inicial de produtos.
+    # `daemon=True` garante que esta thread não impeça o encerramento da aplicação.
+    sync_thread = threading.Thread(target=sync_products, daemon=True)
+    sync_thread.start()
+
+    logger.info("Servidor iniciado. Sincronização de produtos agendada em segundo plano.")
+    yield
+    logger.info("Servidor encerrado.")
+
+
+# Cria a instância da aplicação FastAPI com o novo lifespan
+app = FastAPI(
+    title="MCP TGA Server",
+    version="1.0.0",
+    lifespan=lifespan 
+)
 
 # Dependência de Autenticação
 async def get_api_key(api_key: str = Security(API_KEY_HEADER)):
@@ -64,17 +88,17 @@ scheduler = AsyncIOScheduler()
 async def scheduled_sync():
     await sync_products_from_tga()
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Iniciando servidor MCP")
+# @app.on_event("startup")
+# async def startup_event():
+#     logger.info("Iniciando servidor MCP")
     
-    # Inicia a sincronização em segundo plano
-    asyncio.create_task(sync_products_from_tga())
+#     # Inicia a sincronização em segundo plano
+#     asyncio.create_task(sync_products_from_tga())
     
-    # Inicia o agendador
-    scheduler.start()
+#     # Inicia o agendador
+#     scheduler.start()
     
-    logger.info("Servidor MCP iniciado. Sincronização em segundo plano.")
+#     logger.info("Servidor MCP iniciado. Sincronização em segundo plano.")
 
 @app.get("/health")
 def health_check():
