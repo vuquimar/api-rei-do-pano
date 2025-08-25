@@ -210,7 +210,7 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             LIMIT :limit OFFSET :offset;
             """
 
-            results_proxy = await db.execute(sql_text(sql_query), params)
+            results_proxy = db.execute(sql_text(sql_query), params)
             results = results_proxy.mappings().all()
 
             # Lógica de paginação correta
