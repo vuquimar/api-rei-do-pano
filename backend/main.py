@@ -131,73 +131,60 @@ async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
                 if not tokens:
                     return {"tools": [{"items": [], "page": 1, "has_more": False}]}
 
-                where_clauses = []
-                ranking_clauses = []
-                params = {"limit": limit + 1, "offset": offset}
+                # Lógica de busca PROFISSIONAL com pg_trgm para tolerância a erros e ranking de relevância
+                score_clauses = []
+                # O threshold aumenta com o número de palavras, exigindo que mais termos correspondam.
+                # 0.25 é um bom ponto de partida para similaridade.
+                params = {"limit": limit + 1, "offset": offset, "threshold": 0.25 * len(tokens)} 
 
                 for i, token in enumerate(tokens):
-                    # Coleta as condições WHERE para este token (plural e singular)
-                    where_conditions = []
+                    plural = token
                     
-                    # Lógica para o token original (potencialmente plural)
-                    p_like = f'p_like_{i}'
-                    params[p_like] = f"%{token}%"
-                    where_conditions.append(f'immutable_unaccent("NOMEFANTASIA") ILIKE :{p_like}')
-                    where_conditions.append(f'immutable_unaccent(group_description) ILIKE :{p_like}')
+                    # Lógica de singular aprimorada
+                    singular = plural
+                    if plural.endswith('s') and len(plural) > 3:
+                        if plural.endswith('is'): singular = plural[:-2] + 'l' # enxovais -> enxoval
+                        else: singular = plural[:-1] # toalhas -> toalha
 
-                    # Lógica para o singular, se aplicável
-                    singular = None
-                    if token.endswith('s') and len(token) > 3:
-                        if token.endswith('is') and len(token) > 4: # ex: enxovais -> enxoval
-                            singular = token[:-2] + 'l'
-                        elif token.endswith('es') and len(token) > 4: # ex: meses -> mes
-                            singular = token[:-2]
-                        else: # ex: toalhas -> toalha
-                            singular = token[:-1]
+                    p_param = f'p_{i}'
+                    params[p_param] = plural
+                    
+                    # A similaridade com o nome do produto vale mais
+                    token_scores = [f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{p_param})"]
+                    
+                    # Bônus enorme se o nome do produto COMEÇAR com o termo (alta relevância)
+                    p_start_param = f'p_start_{i}'
+                    params[p_start_param] = f"{plural}%"
+                    token_scores.append(f"(CASE WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :{p_start_param} THEN 1.0 ELSE 0.0 END)")
+
+                    if singular != plural:
+                        s_param = f's_{i}'
+                        params[s_param] = singular
+                        s_start_param = f's_start_{i}'
+                        params[s_start_param] = f"{singular}%"
                         
-                        if singular:
-                            s_like = f's_like_{i}'
-                            params[s_like] = f"%{singular}%"
-                            where_conditions.append(f'immutable_unaccent("NOMEFANTASIA") ILIKE :{s_like}')
-                            where_conditions.append(f'immutable_unaccent(group_description) ILIKE :{s_like}')
+                        token_scores.extend([
+                            f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{s_param})",
+                            f"(CASE WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :{s_start_param} THEN 1.0 ELSE 0.0 END)"
+                        ])
                     
-                    # Cada token (com suas variações) forma um grupo de condições OR
-                    where_clauses.append(f"({ ' OR '.join(where_conditions) })")
+                    # A pontuação para este token é a MAIOR pontuação entre suas variações (plural, singular, etc)
+                    score_clauses.append(f"GREATEST({', '.join(token_scores)})")
 
-                    # Lógica de Ranking para este token
-                    p_start = f'p_start_{i}'
-                    params[p_start] = f"{token}%"
-                    
-                    ranking_parts = [
-                        f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{p_start} THEN 2',
-                        f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{p_like} THEN 3',
-                        f'WHEN immutable_unaccent(group_description) ILIKE :{p_like} THEN 4'
-                    ]
-                    
-                    if singular:
-                        s_start = f's_start_{i}'
-                        params[s_start] = f"{singular}%"
-                        s_like = f's_like_{i}' # já está nos params
-                        ranking_parts.insert(0, f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{s_start} THEN 1')
-                        ranking_parts.insert(3, f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{s_like} THEN 3')
-                        ranking_parts.insert(5, f'WHEN immutable_unaccent(group_description) ILIKE :{s_like} THEN 4')
+                # A pontuação final é a SOMA das pontuações de cada token.
+                # Isso garante que produtos que correspondem a MAIS tokens tenham uma pontuação maior.
+                full_score_logic = " + ".join(score_clauses)
 
-                    ranking_parts.append('ELSE 5')
-                    ranking_clauses.append(f"(CASE {' '.join(ranking_parts)} END)")
-
-                # Combina todas as cláusulas
-                full_where_clause = " AND ".join(where_clauses)
-                full_ranking_logic = " + ".join(ranking_clauses)
-                
                 sql_query = text(f"""
-                    SELECT 
-                        "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
-                    FROM 
-                        products
-                    WHERE {full_where_clause}
-                    ORDER BY
-                        {full_ranking_logic} ASC,
-                        "NOMEFANTASIA" ASC
+                    SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
+                    FROM (
+                        SELECT
+                            "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2",
+                            ({full_score_logic}) AS relevance_score
+                        FROM products
+                    ) AS ranked_products
+                    WHERE relevance_score > :threshold
+                    ORDER BY relevance_score DESC, "NOMEFANTASIA" ASC
                     LIMIT :limit OFFSET :offset
                 """)
 
