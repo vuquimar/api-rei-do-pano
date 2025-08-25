@@ -191,15 +191,25 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                 where_clauses.append(f"({ ' OR '.join(where_token_clauses) })")
 
                 # Cláusula de Ranking: atribui pontos com base na relevância
+                case_clauses = [f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_start_{i} THEN 1']
+                if f"s_start_{i}" in params:
+                    case_clauses.append(f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_start_{i} THEN 1')
+                
+                case_clauses.append(f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} THEN 2')
+                if f"s_like_{i}" in params:
+                    case_clauses.append(f'WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i} THEN 2')
+
+                case_clauses.append(f'WHEN immutable_unaccent(group_description) ILIKE :p_like_{i} THEN 3')
+                if f"s_like_{i}" in params:
+                    case_clauses.append(f'WHEN immutable_unaccent(group_description) ILIKE :s_like_{i} THEN 3')
+                
+                case_clauses.append('ELSE 4')
+
+                full_case_logic = "\n                            ".join(case_clauses)
+
                 ranking_clauses.append(f"""
                     (CASE
-                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_start_{i} THEN 1
-                        {f"WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :s_start_{i} THEN 1" if f's_start_{i}' in params else ""}
-                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} THEN 2
-                        {f"WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :s_like_{i} THEN 2" if f's_like_{i}' in params else ""}
-                        WHEN immutable_unaccent(group_description) ILIKE :p_like_{i} THEN 3
-                        {f"WHEN immutable_unaccent(group_description) ILIKE :s_like_{i} THEN 3" if f's_like_{i}' in params else ""}
-                        ELSE 4
+                            {full_case_logic}
                     END)
                 """)
             
