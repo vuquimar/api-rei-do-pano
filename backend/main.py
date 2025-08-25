@@ -147,55 +147,57 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
     try:
         if tool_name == "search_products":
             if not query:
-                return {
-                    "tools": [
-                        {"response1": "Por favor, informe um termo de busca."}
-                    ]
-                }
+                return {"tools": [{"items": [], "page": 1, "has_more": False}]}
 
-            # Lógica de busca com websearch_to_tsquery para maior flexibilidade
+            # Lógica de busca robusta com ILIKE
             query_clean = unidecode(query.lower())
-            limit = 3 # Limite de produtos por página
+            limit = 3
             offset = (page - 1) * limit
 
-            params = {
-                "query_ts": query_clean,
-                "query_similar": query_clean,
-                "limit": limit + 1,
-                "offset": offset
-            }
+            stopwords = {"de", "do", "da", "dos", "das", "e", "o", "a", "os", "as", "com", "para"}
+            tokens = [word for word in re.split(r'[\\s,/-]+', query_clean) if word and word not in stopwords]
 
-            # Consulta simplificada e mais poderosa usando plainto_tsquery
-            sql_query = f"""
-            WITH results AS (
-                -- Camada 1: Rank ALTO. Usa plainto_tsquery, que lida bem com plurais e múltiplas palavras (operador AND).
-                SELECT *, 2.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query_ts)) AS rank
-                FROM products
-                WHERE search_vector @@ plainto_tsquery('portuguese', :query_ts)
+            if not tokens:
+                return {"tools": [{"items": [], "page": 1, "has_more": False}]}
+
+            where_clauses = []
+            params = {"limit": limit + 1, "offset": offset}
+
+            for i, token in enumerate(tokens):
+                param_name = f"token_{i}"
+                params[param_name] = f"%{token}%"
                 
-                UNION ALL
+                # Constrói a cláusula para o token atual
+                clause_parts = [
+                    f'immutable_unaccent("NOMEFANTASIA") ILIKE :{param_name}',
+                    f'immutable_unaccent(group_description) ILIKE :{param_name}'
+                ]
+                
+                # Tratamento simples de plural
+                if token.endswith('s') and len(token) > 3:
+                    singular_token = token[:-1]
+                    singular_param_name = f"singular_{i}"
+                    params[singular_param_name] = f"%{singular_token}%"
+                    clause_parts.append(f'immutable_unaccent("NOMEFANTASIA") ILIKE :{singular_param_name}')
+                    clause_parts.append(f'immutable_unaccent(group_description) ILIKE :{singular_param_name}')
 
-                -- Camada 2: Rank BAIXO. Similaridade para erros de digitação como fallback.
-                SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) AS rank
+                where_clauses.append(f"({' OR '.join(clause_parts)})")
+
+            # Junta todas as cláusulas com AND para uma busca restritiva
+            full_where_clause = " AND ".join(where_clauses)
+
+            sql_query = f"""
+                SELECT *
                 FROM products
-                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) > 0.3
-            ),
-            ranked_deduped AS (
-                SELECT "CODPRD", MAX(rank) as max_rank
-                FROM results
-                GROUP BY "CODPRD"
-            )
-            SELECT p.*
-            FROM products p
-            JOIN ranked_deduped rd ON p."CODPRD" = rd."CODPRD"
-            ORDER BY rd.max_rank DESC, p."NOMEFANTASIA" ASC
-            LIMIT :limit OFFSET :offset;
+                WHERE {full_where_clause}
+                ORDER BY "NOMEFANTASIA" ASC
+                LIMIT :limit OFFSET :offset;
             """
 
             results_proxy = db.execute(sql_text(sql_query), params)
             results = results_proxy.mappings().all()
 
-            # Lógica de paginação correta
+            # Lógica de paginação
             has_more = len(results) > limit
             page_items = results[:limit]
 
