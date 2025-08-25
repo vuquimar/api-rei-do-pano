@@ -30,14 +30,27 @@ def upgrade() -> None:
     op.create_index(op.f('ix_products_CODGRUPO'), 'products', ['CODGRUPO'], unique=False)
     # ### end Alembic commands ###
 
-    # Recria o gatilho para incluir a nova coluna 'group_description' no search_vector
+    # Cria uma função customizada para gerar o search_vector de forma mais robusta,
+    # garantindo a remoção de acentos antes da vetorização.
     op.execute("""
-        DROP TRIGGER IF EXISTS tsvectorupdate ON products;
+        CREATE OR REPLACE FUNCTION public.update_search_vector() RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.search_vector :=
+                to_tsvector('portuguese',
+                    public.immutable_unaccent(coalesce(NEW."NOMEFANTASIA", '')) || ' ' ||
+                    public.immutable_unaccent(coalesce(NEW.group_description, ''))
+                );
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
     """)
+
+    # Remove o gatilho antigo e aplica o novo que usa a nossa função customizada.
+    op.execute("DROP TRIGGER IF EXISTS tsvectorupdate ON products;")
     op.execute("""
-        CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
-        ON products FOR EACH ROW EXECUTE PROCEDURE
-        tsvector_update_trigger(search_vector, 'pg_catalog.portuguese', "NOMEFANTASIA", group_description);
+        CREATE TRIGGER tsvectorupdate
+        BEFORE INSERT OR UPDATE ON products
+        FOR EACH ROW EXECUTE FUNCTION public.update_search_vector();
     """)
 
 
@@ -49,10 +62,8 @@ def downgrade() -> None:
     op.drop_table('product_groups')
     # ### end Alembic commands ###
 
-    # Reverte o gatilho para a versão anterior (sem 'group_description')
-    op.execute("""
-        DROP TRIGGER IF EXISTS tsvectorupdate ON products;
-    """)
+    # Remove a nossa função customizada e reverte para o gatilho genérico anterior.
+    op.execute("DROP FUNCTION IF EXISTS public.update_search_vector();")
     op.execute("""
         CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE
         ON products FOR EACH ROW EXECUTE PROCEDURE
