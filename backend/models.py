@@ -28,6 +28,16 @@ class Product(Base):
     PRECO2 = Column(Float)
     PRECO1 = Column(Float)
     SALDOGERALFISICO = Column(Float)
-    CODGRUPO = Column(String)
+    CODGRUPO = Column(String, index=True)
     CODBARRAS = Column(String)
+    group_description = Column(String, nullable=True) # Nova coluna para a descrição do grupo
+
+    # Coluna para o vetor de busca full-text
     search_vector = Column(TSVECTOR)
+
+
+class ProductGroup(Base):
+    __tablename__ = "product_groups"
+
+    CODGRUPO = Column(String, primary_key=True, index=True)
+    DESCRICAO = Column(String)

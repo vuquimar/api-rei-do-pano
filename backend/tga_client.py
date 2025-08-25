@@ -1,13 +1,15 @@
 # backend/tga_client.py
 import httpx
 import os
-from models import Product, SessionLocal
+from models import Product, SessionLocal, ProductGroup
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 import json
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 import logging
+from typing import Optional
+from sqlalchemy.orm import Session
 
 load_dotenv()
 
@@ -31,27 +33,90 @@ def save_last_sync():
     with open(LAST_SYNC_FILE, "w") as f:
         json.dump({"last_sync": datetime.now(timezone.utc).isoformat()}, f)
 
-def sync_products():
+def sync_groups(db):
+    """
+    Sincroniza TODOS os grupos de produtos da API TGA para o banco de dados local.
+    """
+    logger.info("▶️ Iniciando sincronização de GRUPOS de produtos...")
+    total_count = 0
+    page = 1
+    limit = 100
+
+    try:
+        if not all([API_BASE, API_KEY]):
+            logger.error("Variáveis de ambiente API_BASE_URL ou API_KEY não configuradas.")
+            return
+
+        headers = {"X-API-Key": API_KEY}
+        endpoint = f"{API_BASE}/v1/grupos"
+
+        while True:
+            params = {"page": page, "limit": limit}
+            logger.info(f"Buscando grupos da TGA: página {page}...")
+            
+            response = httpx.get(endpoint, headers=headers, params=params, timeout=30.0)
+            response.raise_for_status()
+            data = response.json().get("data", [])
+
+            if not data:
+                logger.info("Nenhum grupo novo encontrado. Finalizando busca na TGA.")
+                break
+
+            for item in data:
+                group = ProductGroup(
+                    CODGRUPO=item["CODGRUPO"],
+                    DESCRICAO=item["DESCRICAO"],
+                )
+                db.merge(group)
+                total_count += 1
+
+            db.commit()
+
+            if len(data) < limit:
+                break
+            page += 1
+
+        logger.info(f"✅ Sincronização de grupos bem-sucedida. {total_count} grupos sincronizados.")
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"[ERRO GRUPOS] Falha na chamada à API TGA: {e.response.status_code} - {e.response.text}")
+        db.rollback()
+    except Exception as e:
+        logger.error(f"[ERRO GRUPOS] Falha na sincronização: {e}")
+        db.rollback()
+
+
+def sync_products(db: Optional[Session] = None):
     """
     Sincroniza TODOS os produtos da API TGA para o banco de dados local,
     lidando com a paginação da API de origem.
+    Pode receber uma sessão de DB externa ou criar a sua própria.
     """
     logger.info("▶️ Iniciando sincronização COMPLETA de produtos...")
-    
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        logger.error("[ERRO] Variável de ambiente DATABASE_URL não encontrada para sincronização.")
-        return
 
-    engine = create_engine(db_url) # Reutiliza a função de models.py para consistência
-    SessionLocal_sync = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal_sync()
+    db_session = db
+    close_db_after = False
+    if not db_session:
+        close_db_after = True
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.error("[ERRO] Variável de ambiente DATABASE_URL não encontrada para sincronização.")
+            return
+
+        engine = create_engine(db_url)
+        SessionLocal_sync = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        db_session = SessionLocal_sync()
 
     total_count = 0
     page = 1
     limit = 100 # Quantidade de produtos a buscar por chamada na API TGA
 
     try:
+        # Pega o mapa de grupos do nosso banco de dados local.
+        # Isso assume que sync_groups() já foi executado.
+        groups_map = {g.CODGRUPO: g.DESCRICAO for g in db_session.query(ProductGroup).all()}
+        logger.info(f"Mapa com {len(groups_map)} grupos carregado do banco de dados.")
+
         api_base_url = os.getenv("API_BASE_URL")
         api_key = os.getenv("API_KEY")
 
@@ -76,19 +141,21 @@ def sync_products():
                 break
 
             for item in data:
+                group_code = item.get("CODGRUPO")
                 product = Product(
                     CODPRD=item["CODPRD"],
                     NOMEFANTASIA=item["NOMEFANTASIA"],
                     PRECO2=float(item.get("PRECO2") or 0.0),
                     PRECO1=float(item.get("PRECO1") or 0.0),
                     SALDOGERALFISICO=float(item.get("SALDOGERALFISICO", 0)),
-                    CODGRUPO=item.get("CODGRUPO"),
-                    CODBARRAS=item.get("CODBARRAS")
+                    CODGRUPO=group_code,
+                    CODBARRAS=item.get("CODBARRAS"),
+                    group_description=groups_map.get(group_code) # Adiciona a descrição do grupo
                 )
-                db.merge(product)
+                db_session.merge(product)
                 total_count += 1
             
-            db.commit()
+            db_session.commit()
             
             # Se a API retornou menos que o limite, significa que é a última página
             if len(data) < limit:
@@ -100,10 +167,10 @@ def sync_products():
 
     except httpx.HTTPStatusError as e:
         logger.error(f"[ERRO] Falha na chamada à API TGA: {e.response.status_code} - {e.response.text}")
-        db.rollback()
+        db_session.rollback()
     except Exception as e:
         logger.error(f"[ERRO] Falha na sincronização: {e}")
-        db.rollback()
+        db_session.rollback()
     finally:
-        db.close()
-        logger.info("🔄 Sincronização concluída.")
+        if close_db_after:
+            db_session.close()

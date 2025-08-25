@@ -83,5 +83,8 @@ venv.bak
 .dockerignore
 docker-compose.yml.override
 
+# Dados de Banco de Dados Local
+pgdata/
+
 # Outros
 last_sync.json

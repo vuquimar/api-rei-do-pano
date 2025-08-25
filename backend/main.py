@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # Importações locais corrigidas (sem o prefixo 'backend.')
 from models import Product, get_engine # Importa a nova função
 from sqlalchemy.orm import sessionmaker
-from tga_client import sync_products
+from tga_client import sync_products, sync_groups
 
 # =============== LOGS EM FORMATO JSON ===============
 class JSONFormatter(logging.Formatter):
@@ -67,8 +67,23 @@ async def get_api_key(api_key: str = Security(API_KEY_HEADER)):
 scheduler = AsyncIOScheduler()
 
 @scheduler.scheduled_job("interval", hours=6)
-async def scheduled_sync():
-    await sync_products_from_tga()
+def scheduled_sync():
+    """
+    Job agendado para sincronizar grupos e produtos periodicamente.
+    Cria sua própria sessão de banco de dados para garantir a independência.
+    """
+    logger.info("Iniciando sincronização agendada de grupos e produtos...")
+    engine = get_engine()
+    SessionLocal_sync = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal_sync()
+    try:
+        sync_groups(db)
+        sync_products(db)
+        logger.info("Sincronização agendada concluída com sucesso.")
+    except Exception as e:
+        logger.error(f"Erro na sincronização agendada: {e}", exc_info=True)
+    finally:
+        db.close()
 
 # @app.on_event("startup")
 # async def startup_event():
