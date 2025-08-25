@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, Security, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Security
 from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
@@ -102,123 +102,58 @@ class ToolCallRequest(BaseModel):
     user_id: str = "default"
 
 @app.post("/tool_call")
-async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
-    """Executa uma ferramenta MCP"""
+async def tool_call(
+    request: ToolCallRequest, 
+    db: Session = Depends(get_db), 
+    api_key: str = Depends(get_api_key)
+):
+    query = request.prompt
+    page = request.page
+    page_size = 3
+    offset = (page - 1) * page_size
+
     try:
-        payload = await request.json()
-        tool_name = payload.get("tool_name")
-        params = payload.get("params", {})
-        query = params.get("query", "").strip()
-        page = params.get("page", 1)
+        # Usando websearch_to_tsquery para uma busca mais "Google-like"
+        # Ele converte texto de pesquisa do usuário em uma tsquery, 
+        # tratando aspas para frases e adicionando operadores AND.
+        # Ex: "cama solteiro" se torna 'cama' & 'solteiro'
+        # Ex: '"cama de solteiro"' se torna 'cama' <-> 'de' <-> 'solteiro'
+        search_query = text("""
+            SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
+            FROM products, websearch_to_tsquery('portuguese', :query) query
+            WHERE query @@ search_vector
+            ORDER BY ts_rank(search_vector, query) DESC
+            LIMIT :page_size OFFSET :offset
+        """)
+        
+        results = db.execute(search_query, {"query": query, "page_size": page_size, "offset": offset}).fetchall()
 
-        engine = get_engine()
-        with Session(engine) as db:
-            if tool_name == "search_products":
-                if not query:
-                    return {"tools": [{"items": [], "page": 1, "has_more": False}]}
+        # Fallback para ILIKE se FTS não retornar nada, para garantir cobertura
+        if not results:
+            fallback_query = text("""
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
+                FROM products
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE :query_like
+                OR immutable_unaccent(group_description) ILIKE :query_like
+                ORDER BY "NOMEFANTASIA"
+                LIMIT :page_size OFFSET :offset
+            """)
+            results = db.execute(fallback_query, {"query_like": f"%{query}%", "page_size": page_size, "offset": offset}).fetchall()
 
-                query_clean = unidecode(query.lower())
-                limit = 3
-                offset = (page - 1) * limit
+        items = [
+            {
+                "code": row.CODPRD,
+                "name": row.NOMEFANTASIA,
+                "price": f"{row.PRECO2:.2f}".replace(".", ","),
+                "price_cash": f"{row.PRECO1:.2f}".replace(".", ",")
+            }
+            for row in results
+        ]
 
-                stopwords = {
-                    "de", "do", "da", "dos", "das", "e", "o", "a", "os", "as", "com", "para",
-                    "quero", "queria", "gostaria", "ver", "me", "mostra", "mostrar", "um", "uma", "uns", "umas",
-                    "algum", "alguma", "alguns", "algumas", "opcao", "opcoes", "opçao", "opçoes"
-                }
-                tokens = [word for word in re.split(r'[\\s,/-]+', query_clean) if word and word not in stopwords]
+        has_more = len(items) == page_size
 
-                if not tokens:
-                    return {"tools": [{"items": [], "page": 1, "has_more": False}]}
-
-                # Lógica de busca PROFISSIONAL com pg_trgm para tolerância a erros e ranking de relevância
-                score_clauses = []
-                # O threshold aumenta com o número de palavras, exigindo que mais termos correspondam.
-                # 0.25 é um bom ponto de partida para similaridade.
-                params = {"limit": limit + 1, "offset": offset, "threshold": 0.25 * len(tokens)} 
-
-                for i, token in enumerate(tokens):
-                    plural = token
-                    
-                    # Lógica de singular aprimorada
-                    singular = plural
-                    if plural.endswith('s') and len(plural) > 3:
-                        if plural.endswith('is'): singular = plural[:-2] + 'l' # enxovais -> enxoval
-                        else: singular = plural[:-1] # toalhas -> toalha
-
-                    p_param = f'p_{i}'
-                    params[p_param] = plural
-                    
-                    # A similaridade é calculada contra o nome E a descrição do grupo
-                    token_scores = [
-                        f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{p_param})",
-                        # Um match no grupo tem um peso um pouco menor (80%) que no nome
-                        f"similarity(immutable_unaccent(coalesce(group_description, '')), :{p_param}) * 0.8"
-                    ]
-                    
-                    # Bônus enorme se o nome do produto COMEÇAR com o termo (alta relevância)
-                    p_start_param = f'p_start_{i}'
-                    params[p_start_param] = f"{plural}%"
-                    token_scores.append(f"(CASE WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :{p_start_param} THEN 1.0 ELSE 0.0 END)")
-
-                    if singular != plural:
-                        s_param = f's_{i}'
-                        params[s_param] = singular
-                        s_start_param = f's_start_{i}'
-                        params[s_start_param] = f"{singular}%"
-                        
-                        token_scores.extend([
-                            f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{s_param})",
-                            f"similarity(immutable_unaccent(coalesce(group_description, '')), :{s_param}) * 0.8",
-                            f"(CASE WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :{s_start_param} THEN 1.0 ELSE 0.0 END)"
-                        ])
-                    
-                    # A pontuação para este token é a MAIOR pontuação entre suas variações
-                    score_clauses.append(f"GREATEST({', '.join(token_scores)})")
-
-                # A pontuação final é a SOMA das pontuações de cada token.
-                # Isso garante que produtos que correspondem a MAIS tokens tenham uma pontuação maior.
-                full_score_logic = " + ".join(score_clauses)
-
-                sql_query = text(f"""
-                    SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
-                    FROM (
-                        SELECT
-                            "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2",
-                            ({full_score_logic}) AS relevance_score
-                        FROM products
-                    ) AS ranked_products
-                    WHERE relevance_score > :threshold
-                    ORDER BY relevance_score DESC, "NOMEFANTASIA" ASC
-                    LIMIT :limit OFFSET :offset
-                """)
-
-                results = db.execute(sql_query, params).fetchall()
-                
-                has_more = len(results) > limit
-                products_to_return = results[:limit]
-
-                items = [
-                    {
-                        "code": p.CODPRD,
-                        "name": p.NOMEFANTASIA,
-                        "price": float(p.PRECO2) if p.PRECO2 is not None else 0.0,
-                        "price_cash": float(p.PRECO1) if p.PRECO1 is not None else 0.0,
-                    }
-                    for p in products_to_return
-                ]
-
-                return {"tools": [{"items": items, "page": page, "has_more": has_more}]}
-
-            return {"tools": []}
+        return {"items": items, "page": page, "has_more": has_more}
 
     except Exception as e:
-        logger.error(f"Erro em tool_call: {e}", exc_info=True)
-        # Retorna uma resposta de erro estruturada
-        return {
-            "tools": [
-                {
-                    "error": f"Ocorreu um erro interno ao processar a ferramenta: {e}"
-                }
-            ]
-        }
+        logger.error(f"Erro ao processar a busca: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erro interno ao processar a busca.")

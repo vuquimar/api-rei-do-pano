@@ -121,12 +121,24 @@ def sync_products(db: Session):
                 response.raise_for_status()
                 data = response.json()
 
-                if not data.get("data", {}).get("items"):
+                # Lógica robusta para extrair a lista de itens
+                items = []
+                if isinstance(data, dict):
+                    # Estrutura esperada: {"items": [...]} ou {"data": {"items": [...]}}
+                    if "items" in data:
+                        items = data.get("items", [])
+                    elif "data" in data and isinstance(data.get("data"), dict):
+                        items = data.get("data", {}).get("items", [])
+                elif isinstance(data, list):
+                    # Estrutura alternativa: API retorna uma lista crua [...]
+                    items = data
+
+                if not items:
                     logger.info(f"✅ Sincronização bem-sucedida. {total_products} produtos no total foram sincronizados.")
                     break
 
                 products_to_upsert = []
-                for item in data.get("data", {}).get("items", []):
+                for item in items:
                     price1 = item.get("PRECO1") if item.get("PRECO1") is not None else 0.0
                     price2 = item.get("PRECO2") if item.get("PRECO2") is not None else 0.0
 
