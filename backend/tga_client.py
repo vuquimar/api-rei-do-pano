@@ -65,7 +65,9 @@ def sync_products():
         
         response = httpx.get(endpoint, headers=headers, timeout=30.0)
         response.raise_for_status()
-        data = response.json()
+        
+        # Corrigido: Acessa a lista de produtos dentro da chave "data"
+        data = response.json().get("data", [])
 
         count = 0
         for item in data:
