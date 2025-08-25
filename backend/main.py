@@ -17,7 +17,7 @@ from unidecode import unidecode
 from contextlib import asynccontextmanager
 
 # Importações locais corrigidas (sem o prefixo 'backend.')
-from models import get_engine, Product
+from models import get_engine, Product, get_db
 from tga_client import sync_products, sync_groups
 
 # =============== LOGS EM FORMATO JSON ===============
