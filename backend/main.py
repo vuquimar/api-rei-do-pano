@@ -171,7 +171,7 @@ async def tool_call(
                 FROM products, websearch_to_tsquery('portuguese', :query) query
                 WHERE query @@ search_vector
             )
-            SELECT DISTINCT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
+            SELECT DISTINCT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", rank
             FROM ranked_results
             ORDER BY rank DESC, "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
