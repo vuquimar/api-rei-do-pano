@@ -153,42 +153,29 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                     ]
                 }
 
-            # Lógica de busca refinada com ranking granular em camadas
+            # Lógica de busca com websearch_to_tsquery para maior flexibilidade
             query_clean = unidecode(query.lower())
             limit = 3 # Limite de produtos por página
             offset = (page - 1) * limit
 
-            # Prepara variações do termo de busca para diferentes estratégias
-            # Remove 's' do final para o ILIKE, tratando plurais de forma simples
-            query_singular = query_clean[:-1] if query_clean.endswith('s') and len(query_clean) > 2 else query_clean
-            
             params = {
                 "query_ts": query_clean,
-                "query_like": f"{query_singular}%",
                 "query_similar": query_clean,
-                "limit": limit + 1, # Busca um item a mais para verificar se há próxima página
+                "limit": limit + 1,
                 "offset": offset
             }
 
-            # Nova consulta SQL: ranking em camadas para máxima relevância
+            # Consulta simplificada e mais poderosa usando websearch_to_tsquery
             sql_query = f"""
             WITH results AS (
-                -- Camada 1: Rank MUITO ALTO. O nome do produto COMEÇA com a palavra buscada.
-                -- Prioriza "Toalha..." sobre "Fralda Toalha...".
-                SELECT *, 5.0 AS rank
+                -- Camada 1: Rank ALTO. Usa websearch_to_tsquery, que lida bem com plurais e múltiplas palavras.
+                SELECT *, 2.0 + ts_rank(search_vector, websearch_to_tsquery('portuguese', :query_ts)) AS rank
                 FROM products
-                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE :query_like
+                WHERE search_vector @@ websearch_to_tsquery('portuguese', :query_ts)
                 
                 UNION ALL
 
-                -- Camada 2: Rank ALTO. Relevância do full-text search para variações e palavras no meio.
-                SELECT *, 2.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query_ts)) AS rank
-                FROM products
-                WHERE search_vector @@ plainto_tsquery('portuguese', :query_ts)
-                
-                UNION ALL
-
-                -- Camada 3: Rank BAIXO. Similaridade para erros de digitação. Mais rigoroso.
+                -- Camada 2: Rank BAIXO. Similaridade para erros de digitação como fallback.
                 SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) AS rank
                 FROM products
                 WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) > 0.3
