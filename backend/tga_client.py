@@ -78,11 +78,14 @@ def sync_groups(db):
 
         logger.info(f"✅ Sincronização de grupos bem-sucedida. {total_count} grupos sincronizados.")
 
+    except httpx.RequestError as e:
+        logger.warning(f"[AVISO GRUPOS] Não foi possível conectar à API TGA: {e}. O servidor continuará com os dados existentes.")
+        db.rollback()
     except httpx.HTTPStatusError as e:
-        logger.error(f"[ERRO GRUPOS] Falha na chamada à API TGA: {e.response.status_code} - {e.response.text}")
+        logger.warning(f"[AVISO GRUPOS] Falha na chamada à API TGA: {e.response.status_code}. O servidor continuará com os dados existentes.")
         db.rollback()
     except Exception as e:
-        logger.error(f"[ERRO GRUPOS] Falha na sincronização: {e}")
+        logger.error(f"[ERRO GRUPOS] Falha inesperada na sincronização: {e}")
         db.rollback()
 
 
@@ -164,13 +167,19 @@ def sync_products(db: Optional[Session] = None):
             page += 1
 
         logger.info(f"✅ Sincronização bem-sucedida. {total_count} produtos no total foram sincronizados.")
-
+        
+    except httpx.RequestError as e:
+        logger.warning(f"[AVISO PRODUTOS] Não foi possível conectar à API TGA: {e}. O servidor continuará com os dados existentes.")
+        db_session.rollback()
     except httpx.HTTPStatusError as e:
-        logger.error(f"[ERRO] Falha na chamada à API TGA: {e.response.status_code} - {e.response.text}")
+        logger.warning(f"[AVISO PRODUTOS] Falha na chamada à API TGA: {e.response.status_code}. O servidor continuará com os dados existentes.")
         db_session.rollback()
     except Exception as e:
-        logger.error(f"[ERRO] Falha na sincronização: {e}")
+        logger.error(f"[ERRO PRODUTOS] Falha inesperada na sincronização: {e}")
         db_session.rollback()
+
+    else:
+        logger.error("[ERRO PRODUTOS] As variáveis de ambiente da API TGA não estão configuradas.")
     finally:
         if close_db_after:
             db_session.close()
