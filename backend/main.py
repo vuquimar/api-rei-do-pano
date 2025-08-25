@@ -165,13 +165,13 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                 "offset": offset
             }
 
-            # Consulta simplificada e mais poderosa usando websearch_to_tsquery
+            # Consulta simplificada e mais poderosa usando plainto_tsquery
             sql_query = f"""
             WITH results AS (
-                -- Camada 1: Rank ALTO. Usa websearch_to_tsquery, que lida bem com plurais e múltiplas palavras.
-                SELECT *, 2.0 + ts_rank(search_vector, websearch_to_tsquery('portuguese', :query_ts)) AS rank
+                -- Camada 1: Rank ALTO. Usa plainto_tsquery, que lida bem com plurais e múltiplas palavras (operador AND).
+                SELECT *, 2.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query_ts)) AS rank
                 FROM products
-                WHERE search_vector @@ websearch_to_tsquery('portuguese', :query_ts)
+                WHERE search_vector @@ plainto_tsquery('portuguese', :query_ts)
                 
                 UNION ALL
 
