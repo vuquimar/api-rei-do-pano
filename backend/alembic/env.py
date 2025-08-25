@@ -11,6 +11,9 @@ from sqlalchemy import pool
 
 from alembic import context
 
+# Adicionado para resolver o caminho de importação dentro do Docker
+sys.path.append('.')
+
 # Import your models' Base
 from models import Base
 import os # Adicionado para ler variáveis de ambiente

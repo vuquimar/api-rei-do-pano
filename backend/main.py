@@ -1,5 +1,11 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Security, BackgroundTasks
+from fastapi import (
+    FastAPI, 
+    HTTPException, 
+    Security, 
+    Request
+)
+from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import Any, Dict
@@ -14,16 +20,12 @@ from unidecode import unidecode
 import re
 import os
 from dotenv import load_dotenv
-from backend.models import Product, SessionLocal
-from backend.tga_client import sync_products
 from contextlib import asynccontextmanager
 import threading
 
-load_dotenv()
-
-# Importações locais
+# Importações locais corrigidas (sem o prefixo 'backend.')
 from models import Product, SessionLocal
-from tga_client import sync_products_from_tga
+from tga_client import sync_products
 
 # =============== LOGS EM FORMATO JSON ===============
 class JSONFormatter(logging.Formatter):
