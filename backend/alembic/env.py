@@ -1,10 +1,5 @@
-import os
 import sys
 from logging.config import fileConfig
-
-# Adiciona o diretório de trabalho atual ao sys.path
-# para que o Alembic encontre os outros módulos (ex: models.py)
-sys.path.append(os.getcwd())
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -16,11 +11,7 @@ sys.path.append('.')
 
 # Import your models' Base
 from models import Base
-import os # Adicionado para ler variáveis de ambiente
-
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
-config = context.config
+import os
 
 # Adicionado para ler a DATABASE_URL do ambiente e sobrescrever a configuração do alembic.ini
 # Esta é a correção definitiva para o problema de conexão no Render.
@@ -34,11 +25,7 @@ else:
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-# Set the database URL from your application's settings
-# config.set_main_option('sqlalchemy.url', DATABASE_URL) # This line is now redundant
+fileConfig(config.config_file_name)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -52,7 +39,7 @@ target_metadata = Base.metadata
 # ... etc.
 
 
-def run_migrations_offline() -> None:
+def run_migrations_offline():
     """Run migrations in 'offline' mode.
 
     This configures the context with just a URL
@@ -76,7 +63,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
+def run_migrations_online():
     """Run migrations in 'online' mode.
 
     In this scenario we need to create an Engine
@@ -86,7 +73,7 @@ def run_migrations_online() -> None:
     connectable = engine_from_config(
         config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
+        poolclass=pool.QueuePool,
     )
 
     with connectable.connect() as connection:

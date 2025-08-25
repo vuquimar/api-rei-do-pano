@@ -59,7 +59,8 @@ def sync_products():
             return
 
         headers = {"Authorization": f"Bearer {api_key}"}
-        endpoint = f"{api_base_url}/integracao/produtos"
+        # Corrigindo o endpoint para um padrão mais comum de API
+        endpoint = f"{api_base_url}/v1/produtos" 
         
         response = httpx.get(endpoint, headers=headers, timeout=30.0)
         response.raise_for_status()
