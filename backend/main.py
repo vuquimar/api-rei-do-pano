@@ -113,39 +113,71 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Abordagem simplificada: tokenize a consulta e busque cada palavra separadamente
-        tokens = query.lower().strip().split()
+        # Remover palavras comuns que não ajudam na busca
+        stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por'}
+        
+        # Tokenizar a consulta e remover stopwords
+        tokens = [t for t in query.lower().strip().split() if t not in stopwords and len(t) > 1]
         
         if not tokens:
             return {"items": [], "page": page, "has_more": False}
         
-        # Construir a consulta SQL de forma simples e direta
-        search_conditions = []
-        params = {"page_size": page_size, "offset": offset}
-        
-        # Para cada token, adicionar uma condição de busca
-        for i, token in enumerate(tokens):
-            token_param = f"token_{i}"
-            params[token_param] = f"%{token}%"
-            
-            # Buscar no nome do produto ou na descrição do grupo
-            search_conditions.append(f"""(
-                immutable_unaccent("NOMEFANTASIA") ILIKE :{token_param} OR
-                immutable_unaccent(group_description) ILIKE :{token_param}
-            )""")
-        
-        # Construir a consulta final
-        where_clause = " AND ".join(search_conditions)
-        search_query = text(f"""
-            SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
-            FROM products
-            WHERE {where_clause}
-            ORDER BY "NOMEFANTASIA" ASC
+        # Construir a consulta usando similaridade trigram para tolerância a erros
+        search_query = text("""
+            SELECT 
+                p."CODPRD", 
+                p."NOMEFANTASIA", 
+                p."PRECO1", 
+                p."PRECO2",
+                MAX(similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text)) +
+                MAX(similarity(immutable_unaccent(p.group_description), :query_text)) AS total_similarity
+            FROM 
+                products p
+            WHERE 
+                similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) > 0.1 OR
+                similarity(immutable_unaccent(p.group_description), :query_text) > 0.1
+            GROUP BY 
+                p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2"
+            ORDER BY 
+                total_similarity DESC
             LIMIT :page_size OFFSET :offset
         """)
         
+        # Parâmetros para a consulta
+        params = {
+            "query_text": query.lower().strip(),
+            "page_size": page_size,
+            "offset": offset
+        }
+        
         # Executar a consulta
         results = db.execute(search_query, params).fetchall()
+        
+        # Se não encontrar resultados, tente uma busca por palavra-chave simples
+        if not results:
+            keyword_conditions = []
+            keyword_params = {"page_size": page_size, "offset": offset}
+            
+            for i, token in enumerate(tokens):
+                token_param = f"token_{i}"
+                keyword_params[token_param] = f"%{token}%"
+                
+                keyword_conditions.append(f"""(
+                    immutable_unaccent(p."NOMEFANTASIA") ILIKE :{token_param} OR
+                    immutable_unaccent(p.group_description) ILIKE :{token_param}
+                )""")
+            
+            if keyword_conditions:
+                where_clause = " OR ".join(keyword_conditions)  # Usando OR para ser mais inclusivo
+                fallback_query = text(f"""
+                    SELECT p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2"
+                    FROM products p
+                    WHERE {where_clause}
+                    ORDER BY p."NOMEFANTASIA" ASC
+                    LIMIT :page_size OFFSET :offset
+                """)
+                
+                results = db.execute(fallback_query, keyword_params).fetchall()
 
         items = [
             {
