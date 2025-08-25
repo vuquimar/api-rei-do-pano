@@ -14,7 +14,6 @@ from unidecode import unidecode
 import re
 import os
 from dotenv import load_dotenv
-from fastapi_another_jwt_auth.exceptions import AuthJWTException
 from backend.models import Product, SessionLocal
 from backend.tga_client import sync_products
 from contextlib import asynccontextmanager
