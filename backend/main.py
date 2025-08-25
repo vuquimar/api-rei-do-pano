@@ -154,7 +154,11 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             limit = 3
             offset = (page - 1) * limit
 
-            stopwords = {"de", "do", "da", "dos", "das", "e", "o", "a", "os", "as", "com", "para"}
+            stopwords = {
+                "de", "do", "da", "dos", "das", "e", "o", "a", "os", "as", "com", "para",
+                "quero", "queria", "gostaria", "ver", "me", "mostra", "mostrar", "um", "uma", "uns", "umas",
+                "algum", "alguma", "alguns", "algumas", "opcao", "opcoes", "opçao", "opçoes"
+            }
             tokens = [word for word in re.split(r'[\\s,/-]+', query_clean) if word and word not in stopwords]
 
             if not tokens:
@@ -165,31 +169,36 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             params = {"limit": limit + 1, "offset": offset}
 
             for i, token in enumerate(tokens):
-                singular_token = token[:-1] if token.endswith('s') and len(token) > 3 else token
-                
-                # Parâmetros para ILIKE
                 params[f'p_like_{i}'] = f"%{token}%"
-                params[f's_like_{i}'] = f"%{singular_token}%"
                 params[f'p_start_{i}'] = f"{token}%"
-                params[f's_start_{i}'] = f"{singular_token}%"
 
-                # Cláusula WHERE: precisa corresponder de alguma forma
-                where_clauses.append(f"""
-                    (immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} OR
-                     immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i} OR
-                     immutable_unaccent(group_description) ILIKE :p_like_{i} OR
-                     immutable_unaccent(group_description) ILIKE :s_like_{i})
-                """)
+                # Constrói a cláusula WHERE para o token atual
+                where_token_clauses = [
+                    f'immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i}',
+                    f'immutable_unaccent(group_description) ILIKE :p_like_{i}'
+                ]
+                
+                # Tratamento de plural aprimorado: busca por singular E plural
+                if token.endswith('s') and len(token) > 3:
+                    singular_token = token[:-1]
+                    params[f's_like_{i}'] = f"%{singular_token}%"
+                    params[f's_start_{i}'] = f"{singular_token}%"
+                    where_token_clauses.extend([
+                        f'immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i}',
+                        f'immutable_unaccent(group_description) ILIKE :s_like_{i}'
+                    ])
+
+                where_clauses.append(f"({ ' OR '.join(where_token_clauses) })")
 
                 # Cláusula de Ranking: atribui pontos com base na relevância
                 ranking_clauses.append(f"""
                     (CASE
-                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_start_{i} THEN 1
                         WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_start_{i} THEN 1
-                        WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :s_like_{i} THEN 2
+                        {f"WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :s_start_{i} THEN 1" if f's_start_{i}' in params else ""}
                         WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :p_like_{i} THEN 2
-                        WHEN immutable_unaccent(group_description) ILIKE :s_like_{i} THEN 3
+                        {f"WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :s_like_{i} THEN 2" if f's_like_{i}' in params else ""}
                         WHEN immutable_unaccent(group_description) ILIKE :p_like_{i} THEN 3
+                        {f"WHEN immutable_unaccent(group_description) ILIKE :s_like_{i} THEN 3" if f's_like_{i}' in params else ""}
                         ELSE 4
                     END)
                 """)
