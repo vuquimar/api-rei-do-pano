@@ -191,7 +191,7 @@ async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
                 
                 sql_query = text(f"""
                     SELECT 
-                        "CODIGO", "NOMEFANTASIA", "PRECO1", "PRECO2"
+                        "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2"
                     FROM 
                         products
                     WHERE {full_where_clause}
@@ -208,7 +208,7 @@ async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
 
                 items = [
                     {
-                        "code": p.CODIGO,
+                        "code": p.CODPRD,
                         "name": p.NOMEFANTASIA,
                         "price": float(p.PRECO2) if p.PRECO2 is not None else 0.0,
                         "price_cash": float(p.PRECO1) if p.PRECO1 is not None else 0.0,
