@@ -74,16 +74,12 @@ async def startup_event():
     logger.info("Servidor MCP iniciado. Sincronização em segundo plano.")
 
 @app.get("/health")
-async def health_check():
-    """Verifica se o servidor está saudável"""
-    try:
-        db = SessionLocal()
-        db.execute(sql_text("SELECT 1"))
-        db.close()
-        return {"status": "healthy", "db": "connected", "service": "mcp-tga", "time": datetime.utcnow().isoformat()}
-    except Exception as e:
-        logger.error(f"Health check falhou: {e}")
-        return {"status": "unhealthy", "error": str(e)}
+def health_check():
+    """
+    Verificação de saúde simples. Não depende do banco de dados.
+    Se a API está respondendo, está 'saudável'.
+    """
+    return {"status": "ok"}
 
 @app.get("/tools")
 async def list_tools():
