@@ -149,8 +149,12 @@ async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
                     p_param = f'p_{i}'
                     params[p_param] = plural
                     
-                    # A similaridade com o nome do produto vale mais
-                    token_scores = [f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{p_param})"]
+                    # A similaridade é calculada contra o nome E a descrição do grupo
+                    token_scores = [
+                        f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{p_param})",
+                        # Um match no grupo tem um peso um pouco menor (80%) que no nome
+                        f"similarity(immutable_unaccent(coalesce(group_description, '')), :{p_param}) * 0.8"
+                    ]
                     
                     # Bônus enorme se o nome do produto COMEÇAR com o termo (alta relevância)
                     p_start_param = f'p_start_{i}'
@@ -165,10 +169,11 @@ async def tool_call(request: Request, api_key: str = Depends(get_api_key)):
                         
                         token_scores.extend([
                             f"similarity(immutable_unaccent(\"NOMEFANTASIA\"), :{s_param})",
+                            f"similarity(immutable_unaccent(coalesce(group_description, '')), :{s_param}) * 0.8",
                             f"(CASE WHEN immutable_unaccent(\"NOMEFANTASIA\") ILIKE :{s_start_param} THEN 1.0 ELSE 0.0 END)"
                         ])
                     
-                    # A pontuação para este token é a MAIOR pontuação entre suas variações (plural, singular, etc)
+                    # A pontuação para este token é a MAIOR pontuação entre suas variações
                     score_clauses.append(f"GREATEST({', '.join(token_scores)})")
 
                 # A pontuação final é a SOMA das pontuações de cada token.
