@@ -158,28 +158,45 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
                     ]
                 }
 
-            # Lógica de busca refinada
+            # Lógica de busca refinada com ranking granular em camadas
             query_clean = unidecode(query.lower())
             limit = 3 # Limite de produtos por página
             offset = (page - 1) * limit
-            params = {"query": query_clean, "limit": limit, "offset": offset}
 
-            # Nova consulta SQL: prioriza full-text search com um bônus de rank,
-            # e usa similaridade como fallback.
+            # Prepara variações do termo de busca para diferentes estratégias
+            # Remove 's' do final para o ILIKE, tratando plurais de forma simples
+            query_singular = query_clean[:-1] if query_clean.endswith('s') and len(query_clean) > 2 else query_clean
+            
+            params = {
+                "query_ts": query_clean,
+                "query_like": f"{query_singular}%",
+                "query_similar": query_clean,
+                "limit": limit + 1, # Busca um item a mais para verificar se há próxima página
+                "offset": offset
+            }
+
+            # Nova consulta SQL: ranking em camadas para máxima relevância
             sql_query = f"""
             WITH results AS (
-                -- 1. Combina um peso base alto (3.0) com a relevância do full-text search
-                --    Isso garante que correspondências (com stemming) fiquem no topo e ordenadas.
-                SELECT *, 3.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query)) AS rank
+                -- Camada 1: Rank MUITO ALTO. O nome do produto COMEÇA com a palavra buscada.
+                -- Prioriza "Toalha..." sobre "Fralda Toalha...".
+                SELECT *, 5.0 AS rank
                 FROM products
-                WHERE search_vector @@ plainto_tsquery('portuguese', :query)
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE :query_like
                 
                 UNION ALL
 
-                -- 2. Peso BAIXO para erros de digitação (similaridade), como fallback.
-                SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) AS rank
+                -- Camada 2: Rank ALTO. Relevância do full-text search para variações e palavras no meio.
+                SELECT *, 2.0 + ts_rank(search_vector, plainto_tsquery('portuguese', :query_ts)) AS rank
                 FROM products
-                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.2
+                WHERE search_vector @@ plainto_tsquery('portuguese', :query_ts)
+                
+                UNION ALL
+
+                -- Camada 3: Rank BAIXO. Similaridade para erros de digitação. Mais rigoroso.
+                SELECT *, similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) AS rank
+                FROM products
+                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_similar)) > 0.3
             ),
             ranked_deduped AS (
                 SELECT "CODPRD", MAX(rank) as max_rank
@@ -193,21 +210,11 @@ async def tool_call(request: ToolCallRequest, api_key: str = Security(get_api_ke
             LIMIT :limit OFFSET :offset;
             """
 
-            results = db.query(Product).from_statement(sql_text(sql_query)).params(**params).all()
-            db.close()
+            results_proxy = await db.execute(sql_text(sql_query), params)
+            results = results_proxy.mappings().all()
 
-            if not results:
-                return {
-                    "tools": [
-                        {
-                            "items": [],
-                            "page": page,
-                            "has_more": False
-                        }
-                    ]
-                }
-
-            has_more = len(results) == limit
+            # Lógica de paginação correta
+            has_more = len(results) > limit
             page_items = results[:limit]
 
             # Resposta estruturada
