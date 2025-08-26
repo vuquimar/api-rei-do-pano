@@ -113,67 +113,14 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Solução final: tokenização + busca inteligente
+        # Solução ultra-simples e direta - sem tokens, sem complicações
+        # Buscar diretamente por ILIKE no nome do produto e na descrição do grupo
         
-        # Tokenizar a consulta e remover stopwords
-        stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por', 'a', 'o', 'as', 'os'}
-        tokens = [t for t in query.lower().strip().split() if t not in stopwords and len(t) > 1]
+        # Preparar a consulta
+        query_text = query.lower().strip()
         
-        if not tokens:
-            return {"items": [], "page": page, "has_more": False}
-        
-        # Construir condições de busca para cada token
-        conditions = []
-        search_params = {
-            "page_size": page_size,
-            "offset": offset
-        }
-        
-        for i, token in enumerate(tokens):
-            # Gerar variações singular/plural para cada token
-            singular = token
-            plural = token
-            
-            # Regras de transformação singular/plural
-            if token.endswith('is'):  # enxovais -> enxoval
-                singular = token[:-2] + 'l'
-            elif token.endswith('ns'):  # lençóis -> lençol
-                singular = token[:-2] + 'm'
-            elif token.endswith('s'):  # toalhas -> toalha
-                singular = token[:-1]
-            elif token.endswith('l'):  # enxoval -> enxovais
-                plural = token[:-1] + 'is'
-            elif token.endswith('m'):  # homem -> homens
-                plural = token[:-1] + 'ns'
-            else:
-                plural = token + 's'
-            
-            # Adicionar parâmetros para todas as variações
-            token_param = f"token_{i}"
-            singular_param = f"singular_{i}"
-            plural_param = f"plural_{i}"
-            
-            search_params[token_param] = f"%{token}%"
-            search_params[singular_param] = f"%{singular}%"
-            search_params[plural_param] = f"%{plural}%"
-            
-            # Condição para este token: buscar original, singular ou plural no nome ou descrição do grupo
-            token_condition = f"""(
-                immutable_unaccent("NOMEFANTASIA") ILIKE :{token_param} OR
-                immutable_unaccent("NOMEFANTASIA") ILIKE :{singular_param} OR
-                immutable_unaccent("NOMEFANTASIA") ILIKE :{plural_param} OR
-                immutable_unaccent(group_description) ILIKE :{token_param} OR
-                immutable_unaccent(group_description) ILIKE :{singular_param} OR
-                immutable_unaccent(group_description) ILIKE :{plural_param}
-            )"""
-            
-            conditions.append(token_condition)
-        
-        # Combinar condições com AND (todos os tokens devem estar presentes)
-        where_clause = " AND ".join(conditions)
-        
-        # Construir a consulta SQL final
-        search_sql = text(f"""
+        # Buscar diretamente pelo termo e suas variações
+        search_sql = text("""
             SELECT 
                 "CODPRD", 
                 "NOMEFANTASIA", 
@@ -182,18 +129,19 @@ async def tool_call(
             FROM 
                 products
             WHERE 
-                {where_clause}
+                immutable_unaccent("NOMEFANTASIA") ILIKE :query_param OR
+                immutable_unaccent(group_description) ILIKE :query_param
             ORDER BY 
-                CASE 
-                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{tokens[0] + '_exact'} THEN 1
-                    ELSE 2
-                END,
                 "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
-        # Adicionar parâmetro para ordenação exata
-        search_params[tokens[0] + '_exact'] = tokens[0]
+        # Parâmetros para a busca
+        search_params = {
+            "query_param": f"%{query_text}%",
+            "page_size": page_size,
+            "offset": offset
+        }
         
         # Executar a busca
         results = db.execute(search_sql, search_params).fetchall()
