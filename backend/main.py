@@ -185,17 +185,7 @@ async def tool_call(
             similarity_results = db.execute(similarity_query, similarity_params).fetchall()
             results.extend(similarity_results)
         
-        # Parâmetros para a consulta
-        params = {
-            "query_text": query.lower().strip(),
-            "page_size": page_size,
-            "offset": offset
-        }
-        
-        # Executar a consulta
-        results = db.execute(search_query, params).fetchall()
-        
-        # Se não encontrar resultados, tente uma busca por palavra-chave simples
+        # Se ainda não encontrarmos resultados suficientes, tentar busca por tokens
         if not results:
             keyword_conditions = []
             keyword_params = {"page_size": page_size, "offset": offset}
@@ -212,7 +202,7 @@ async def tool_call(
             if keyword_conditions:
                 where_clause = " OR ".join(keyword_conditions)  # Usando OR para ser mais inclusivo
                 fallback_query = text(f"""
-                    SELECT p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2"
+                    SELECT p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2", 0.1 as match_score
                     FROM products p
                     WHERE {where_clause}
                     ORDER BY p."NOMEFANTASIA" ASC
