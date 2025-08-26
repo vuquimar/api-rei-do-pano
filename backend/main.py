@@ -113,103 +113,39 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Remover palavras comuns que não ajudam na busca
-        stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por'}
-        
-        # Tokenizar a consulta e remover stopwords
-        tokens = [t for t in query.lower().strip().split() if t not in stopwords and len(t) > 1]
-        
-        if not tokens:
-            return {"items": [], "page": page, "has_more": False}
-        
-        # Abordagem em duas etapas: primeiro busca exata, depois por similaridade
-        
-        # Etapa 1: Busca direta por correspondência exata ou contém
-        direct_query = text("""
+        # Solução simples e direta: buscar por ILIKE no nome e descrição do grupo
+        search_sql = text("""
             SELECT 
-                p."CODPRD", 
-                p."NOMEFANTASIA", 
-                p."PRECO1", 
-                p."PRECO2",
-                1.0 AS match_score  -- Pontuação máxima para correspondências diretas
+                "CODPRD", 
+                "NOMEFANTASIA", 
+                "PRECO1", 
+                "PRECO2"
             FROM 
-                products p
+                products
             WHERE 
-                immutable_unaccent(p."NOMEFANTASIA") ILIKE :contains_query
+                immutable_unaccent("NOMEFANTASIA") ILIKE :query_param OR
+                immutable_unaccent(group_description) ILIKE :query_param
             ORDER BY 
-                p."NOMEFANTASIA" ASC
+                CASE 
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :exact_query THEN 1
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :start_query THEN 2
+                    ELSE 3
+                END,
+                "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
-        # Parâmetros para busca direta
-        direct_params = {
-            "contains_query": f"%{query.lower().strip()}%",
+        # Parâmetros para a busca
+        search_params = {
+            "query_param": f"%{query.lower().strip()}%",
+            "exact_query": query.lower().strip(),
+            "start_query": f"{query.lower().strip()}%",
             "page_size": page_size,
             "offset": offset
         }
         
-        # Tentar primeiro com busca direta
-        results = db.execute(direct_query, direct_params).fetchall()
-        
-        # Se não encontrar resultados suficientes, usar similaridade com limiar mais alto
-        if len(results) < page_size:
-            # Construir a consulta usando similaridade trigram com limiar mais alto
-            similarity_query = text("""
-                SELECT 
-                    p."CODPRD", 
-                    p."NOMEFANTASIA", 
-                    p."PRECO1", 
-                    p."PRECO2",
-                    similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) AS match_score
-                FROM 
-                    products p
-                WHERE 
-                    similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) > 0.3
-                    AND p."CODPRD" NOT IN :excluded_codes
-                ORDER BY 
-                    match_score DESC
-                LIMIT :remaining_size
-            """)
-            
-            # Extrair códigos dos resultados já obtidos para evitar duplicatas
-            excluded_codes = tuple([r.CODPRD for r in results]) if results else ('',)
-            
-            # Parâmetros para a consulta de similaridade
-            similarity_params = {
-                "query_text": query.lower().strip(),
-                "excluded_codes": excluded_codes,
-                "remaining_size": page_size - len(results)
-            }
-            
-            # Executar consulta de similaridade e adicionar aos resultados
-            similarity_results = db.execute(similarity_query, similarity_params).fetchall()
-            results.extend(similarity_results)
-        
-        # Se ainda não encontrarmos resultados suficientes, tentar busca por tokens
-        if not results:
-            keyword_conditions = []
-            keyword_params = {"page_size": page_size, "offset": offset}
-            
-            for i, token in enumerate(tokens):
-                token_param = f"token_{i}"
-                keyword_params[token_param] = f"%{token}%"
-                
-                keyword_conditions.append(f"""(
-                    immutable_unaccent(p."NOMEFANTASIA") ILIKE :{token_param} OR
-                    immutable_unaccent(p.group_description) ILIKE :{token_param}
-                )""")
-            
-            if keyword_conditions:
-                where_clause = " OR ".join(keyword_conditions)  # Usando OR para ser mais inclusivo
-                fallback_query = text(f"""
-                    SELECT p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2", 0.1 as match_score
-                    FROM products p
-                    WHERE {where_clause}
-                    ORDER BY p."NOMEFANTASIA" ASC
-                    LIMIT :page_size OFFSET :offset
-                """)
-                
-                results = db.execute(fallback_query, keyword_params).fetchall()
+        # Executar a busca
+        results = db.execute(search_sql, search_params).fetchall()
 
         items = [
             {
