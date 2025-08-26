@@ -23,10 +23,10 @@ if __name__ == "__main__":
         # Força a atualização do search_vector para todos os produtos
         logger.info("Forçando atualização do search_vector para todos os produtos...")
         update_query = text("""
-            UPDATE products 
-            SET search_vector = to_tsvector('portuguese', 
-                public.immutable_unaccent(coalesce("NOMEFANTASIA", '')) || ' ' || 
-                public.immutable_unaccent(coalesce(group_description, ''))
+            UPDATE products
+            SET search_vector = (
+                setweight(to_tsvector('portuguese', public.immutable_unaccent(coalesce("NOMEFANTASIA", ''))), 'A') ||
+                setweight(to_tsvector('portuguese', public.immutable_unaccent(coalesce(group_description, ''))), 'C')
             )
         """)
         db.execute(update_query)

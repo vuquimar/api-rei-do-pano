@@ -116,6 +116,12 @@ async def tool_call(
         if not query:
             return {"items": [], "page": page, "has_more": False}
 
+        # Prepara a query removendo stopwords para as buscas mais simples
+        stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por', 'a', 'o', 'as', 'os', 'um', 'uma'}
+        clean_query = " ".join([t for t in query.lower().strip().split() if t not in stopwords])
+        if not clean_query:
+            clean_query = query # Fallback se a query só tiver stopwords
+
         # Estratégia de busca avançada em múltiplas camadas com ranking explícito
         search_sql = text("""
             WITH ranked_products AS (
@@ -150,9 +156,9 @@ async def tool_call(
 
                 -- Camada 5: Similaridade para typos (fallback, rank 5)
                 SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 as rank,
-                       similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) as score
+                       similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) as score
                 FROM products
-                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.3
+                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) > 0.3
             ),
             unique_products AS (
                 SELECT
@@ -177,10 +183,11 @@ async def tool_call(
         """)
 
         params = {
-            "query": query,
+            "query": query, # Query original para FTS, que tem seu próprio-tratamento de stopwords
+            "clean_query": clean_query, # Query limpa para similaridade
             "query_code": query.upper(),
-            "query_like_start": f"{query}%",
-            "query_like_any": f"%{query}%",
+            "query_like_start": f"{clean_query}%",
+            "query_like_any": f"%%{clean_query}%%",
             "page_size": page_size,
             "offset": offset,
         }
