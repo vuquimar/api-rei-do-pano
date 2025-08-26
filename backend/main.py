@@ -113,7 +113,24 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Solução simples e direta: buscar por ILIKE no nome e descrição do grupo
+        # Solução ultra-simples: buscar por ILIKE no nome e descrição do grupo
+        # Também busca por variações singular/plural comuns
+        
+        # Preparar variações da busca
+        query_text = query.lower().strip()
+        singular_form = query_text
+        plural_form = query_text
+        
+        # Tentar detectar plural/singular
+        if query_text.endswith('is'):  # Caso especial: enxovais -> enxoval
+            singular_form = query_text[:-2] + 'l'
+        elif query_text.endswith('s'):  # Caso geral: toalhas -> toalha
+            singular_form = query_text[:-1]
+        elif query_text.endswith('l'):  # Caso especial: enxoval -> enxovais
+            plural_form = query_text[:-1] + 'is'
+        else:  # Caso geral: toalha -> toalhas
+            plural_form = query_text + 's'
+        
         search_sql = text("""
             SELECT 
                 "CODPRD", 
@@ -124,22 +141,19 @@ async def tool_call(
                 products
             WHERE 
                 immutable_unaccent("NOMEFANTASIA") ILIKE :query_param OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :singular_param OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :plural_param OR
                 immutable_unaccent(group_description) ILIKE :query_param
             ORDER BY 
-                CASE 
-                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :exact_query THEN 1
-                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :start_query THEN 2
-                    ELSE 3
-                END,
                 "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
         # Parâmetros para a busca
         search_params = {
-            "query_param": f"%{query.lower().strip()}%",
-            "exact_query": query.lower().strip(),
-            "start_query": f"{query.lower().strip()}%",
+            "query_param": f"%{query_text}%",
+            "singular_param": f"%{singular_form}%",
+            "plural_param": f"%{plural_form}%",
             "page_size": page_size,
             "offset": offset
         }
