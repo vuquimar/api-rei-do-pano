@@ -113,32 +113,65 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Solução ultra-simples e direta - sem tokens, sem complicações
-        # Buscar diretamente por ILIKE no nome do produto e na descrição do grupo
-        
+        # Solução robusta para lidar com singular/plural
         # Preparar a consulta
         query_text = query.lower().strip()
         
-        # Buscar diretamente pelo termo e suas variações
+        # Tratar singular/plural automaticamente
+        singular_query = query_text
+        plural_query = query_text
+        
+        # Se termina com 's', provavelmente é plural, então cria versão singular
+        if query_text.endswith('s'):
+            singular_query = query_text[:-1]  # Remove o 's' final
+        # Se não termina com 's', provavelmente é singular, então cria versão plural
+        else:
+            plural_query = query_text + 's'  # Adiciona 's' no final
+        
+        # Casos especiais
+        if query_text.endswith('is'):  # enxovais -> enxoval
+            singular_query = query_text[:-2] + 'l'
+        elif query_text.endswith('ns'):  # lençóis -> lençol
+            singular_query = query_text[:-2] + 'm'
+        elif query_text.endswith('l'):  # enxoval -> enxovais
+            plural_query = query_text[:-1] + 'is'
+        elif query_text.endswith('m'):  # homem -> homens
+            plural_query = query_text[:-1] + 'ns'
+        
+        # Buscar tanto pelo termo original quanto pelas variações singular/plural
         search_sql = text("""
             SELECT 
                 "CODPRD", 
                 "NOMEFANTASIA", 
                 "PRECO1", 
-                "PRECO2"
+                "PRECO2",
+                CASE 
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :exact_query THEN 1
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :original_query THEN 2
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :singular_query THEN 3
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :plural_query THEN 3
+                    WHEN immutable_unaccent(group_description) ILIKE :original_query THEN 4
+                    ELSE 5
+                END as rank
             FROM 
                 products
             WHERE 
-                immutable_unaccent("NOMEFANTASIA") ILIKE :query_param OR
-                immutable_unaccent(group_description) ILIKE :query_param
+                immutable_unaccent("NOMEFANTASIA") ILIKE :original_query OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :singular_query OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :plural_query OR
+                immutable_unaccent(group_description) ILIKE :original_query
             ORDER BY 
+                rank ASC,
                 "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
         # Parâmetros para a busca
         search_params = {
-            "query_param": f"%{query_text}%",
+            "exact_query": f"{query_text}",
+            "original_query": f"%{query_text}%",
+            "singular_query": f"%{singular_query}%",
+            "plural_query": f"%{plural_query}%",
             "page_size": page_size,
             "offset": offset
         }
