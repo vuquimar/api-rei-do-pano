@@ -122,26 +122,68 @@ async def tool_call(
         if not tokens:
             return {"items": [], "page": page, "has_more": False}
         
-        # Construir a consulta usando similaridade trigram para tolerância a erros
-        search_query = text("""
+        # Abordagem em duas etapas: primeiro busca exata, depois por similaridade
+        
+        # Etapa 1: Busca direta por correspondência exata ou contém
+        direct_query = text("""
             SELECT 
                 p."CODPRD", 
                 p."NOMEFANTASIA", 
                 p."PRECO1", 
                 p."PRECO2",
-                MAX(similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text)) +
-                MAX(similarity(immutable_unaccent(p.group_description), :query_text)) AS total_similarity
+                1.0 AS match_score  -- Pontuação máxima para correspondências diretas
             FROM 
                 products p
             WHERE 
-                similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) > 0.1 OR
-                similarity(immutable_unaccent(p.group_description), :query_text) > 0.1
-            GROUP BY 
-                p."CODPRD", p."NOMEFANTASIA", p."PRECO1", p."PRECO2"
+                immutable_unaccent(p."NOMEFANTASIA") ILIKE :contains_query
             ORDER BY 
-                total_similarity DESC
+                p."NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
+        
+        # Parâmetros para busca direta
+        direct_params = {
+            "contains_query": f"%{query.lower().strip()}%",
+            "page_size": page_size,
+            "offset": offset
+        }
+        
+        # Tentar primeiro com busca direta
+        results = db.execute(direct_query, direct_params).fetchall()
+        
+        # Se não encontrar resultados suficientes, usar similaridade com limiar mais alto
+        if len(results) < page_size:
+            # Construir a consulta usando similaridade trigram com limiar mais alto
+            similarity_query = text("""
+                SELECT 
+                    p."CODPRD", 
+                    p."NOMEFANTASIA", 
+                    p."PRECO1", 
+                    p."PRECO2",
+                    similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) AS match_score
+                FROM 
+                    products p
+                WHERE 
+                    similarity(immutable_unaccent(p."NOMEFANTASIA"), :query_text) > 0.3
+                    AND p."CODPRD" NOT IN :excluded_codes
+                ORDER BY 
+                    match_score DESC
+                LIMIT :remaining_size
+            """)
+            
+            # Extrair códigos dos resultados já obtidos para evitar duplicatas
+            excluded_codes = tuple([r.CODPRD for r in results]) if results else ('',)
+            
+            # Parâmetros para a consulta de similaridade
+            similarity_params = {
+                "query_text": query.lower().strip(),
+                "excluded_codes": excluded_codes,
+                "remaining_size": page_size - len(results)
+            }
+            
+            # Executar consulta de similaridade e adicionar aos resultados
+            similarity_results = db.execute(similarity_query, similarity_params).fetchall()
+            results.extend(similarity_results)
         
         # Parâmetros para a consulta
         params = {
