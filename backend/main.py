@@ -113,36 +113,80 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Solução extremamente simplificada
-        # Busca por similaridade usando pg_trgm
-        
+        if not query:
+            return {"items": [], "page": page, "has_more": False}
+
+        # Estratégia de busca avançada em múltiplas camadas com ranking explícito
         search_sql = text("""
-            SELECT 
-                "CODPRD", 
-                "NOMEFANTASIA", 
-                "PRECO1", 
+            WITH ranked_products AS (
+                -- Camada 1: Código exato (rank 1, score máximo)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 1 AS rank, 10.0 AS score
+                FROM products
+                WHERE "CODPRD" = :query_code
+
+                UNION ALL
+
+                -- Camada 2: Full-Text Search com websearch_to_tsquery (rank 2)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 2 AS rank,
+                       ts_rank_cd(search_vector, websearch_to_tsquery('portuguese', :query)) AS score
+                FROM products
+                WHERE search_vector @@ websearch_to_tsquery('portuguese', :query)
+
+                UNION ALL
+
+                -- Camada 3: ILIKE no início do nome (correspondência de prefixo, rank 3)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 0.5 AS score
+                FROM products
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_start)
+
+                UNION ALL
+
+                -- Camada 4: ILIKE em qualquer parte do nome (rank 4)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.3 AS score
+                FROM products
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
+
+                UNION ALL
+
+                -- Camada 5: Similaridade para typos (fallback, rank 5)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 as rank,
+                       similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) as score
+                FROM products
+                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query)) > 0.3
+            ),
+            unique_products AS (
+                SELECT
+                    "CODPRD",
+                    "NOMEFANTASIA",
+                    "PRECO1",
+                    "PRECO2",
+                    rank,
+                    score,
+                    ROW_NUMBER() OVER(PARTITION BY "CODPRD" ORDER BY rank ASC, score DESC) as rn
+                FROM ranked_products
+            )
+            SELECT
+                "CODPRD",
+                "NOMEFANTASIA",
+                "PRECO1",
                 "PRECO2"
-            FROM 
-                products
-            WHERE 
-                similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_text)) > 0.3
-                OR immutable_unaccent("NOMEFANTASIA") ILIKE :query_pattern
-            ORDER BY 
-                similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:query_text)) DESC,
-                "NOMEFANTASIA" ASC
+            FROM unique_products
+            WHERE rn = 1
+            ORDER BY rank ASC, score DESC, "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
-        
-        # Parâmetros para a busca
-        search_params = {
-            "query_text": query.lower().strip(),
-            "query_pattern": f"%{query.lower().strip()}%",
+
+        params = {
+            "query": query,
+            "query_code": query.upper(),
+            "query_like_start": f"{query}%",
+            "query_like_any": f"%{query}%",
             "page_size": page_size,
-            "offset": offset
+            "offset": offset,
         }
-        
+
         # Executar a busca
-        results = db.execute(search_sql, search_params).fetchall()
+        results = db.execute(search_sql, params).fetchall()
 
         items = [
             {
