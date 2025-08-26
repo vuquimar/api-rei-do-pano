@@ -113,25 +113,67 @@ async def tool_call(
     offset = (page - 1) * page_size
 
     try:
-        # Solução ultra-simples: buscar por ILIKE no nome e descrição do grupo
-        # Também busca por variações singular/plural comuns
+        # Solução final: tokenização + busca inteligente
         
-        # Preparar variações da busca
-        query_text = query.lower().strip()
-        singular_form = query_text
-        plural_form = query_text
+        # Tokenizar a consulta e remover stopwords
+        stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por', 'a', 'o', 'as', 'os'}
+        tokens = [t for t in query.lower().strip().split() if t not in stopwords and len(t) > 1]
         
-        # Tentar detectar plural/singular
-        if query_text.endswith('is'):  # Caso especial: enxovais -> enxoval
-            singular_form = query_text[:-2] + 'l'
-        elif query_text.endswith('s'):  # Caso geral: toalhas -> toalha
-            singular_form = query_text[:-1]
-        elif query_text.endswith('l'):  # Caso especial: enxoval -> enxovais
-            plural_form = query_text[:-1] + 'is'
-        else:  # Caso geral: toalha -> toalhas
-            plural_form = query_text + 's'
+        if not tokens:
+            return {"items": [], "page": page, "has_more": False}
         
-        search_sql = text("""
+        # Construir condições de busca para cada token
+        conditions = []
+        search_params = {
+            "page_size": page_size,
+            "offset": offset
+        }
+        
+        for i, token in enumerate(tokens):
+            # Gerar variações singular/plural para cada token
+            singular = token
+            plural = token
+            
+            # Regras de transformação singular/plural
+            if token.endswith('is'):  # enxovais -> enxoval
+                singular = token[:-2] + 'l'
+            elif token.endswith('ns'):  # lençóis -> lençol
+                singular = token[:-2] + 'm'
+            elif token.endswith('s'):  # toalhas -> toalha
+                singular = token[:-1]
+            elif token.endswith('l'):  # enxoval -> enxovais
+                plural = token[:-1] + 'is'
+            elif token.endswith('m'):  # homem -> homens
+                plural = token[:-1] + 'ns'
+            else:
+                plural = token + 's'
+            
+            # Adicionar parâmetros para todas as variações
+            token_param = f"token_{i}"
+            singular_param = f"singular_{i}"
+            plural_param = f"plural_{i}"
+            
+            search_params[token_param] = f"%{token}%"
+            search_params[singular_param] = f"%{singular}%"
+            search_params[plural_param] = f"%{plural}%"
+            
+            # Condição para este token: buscar original, singular ou plural no nome ou descrição do grupo
+            token_condition = f"""(
+                immutable_unaccent("NOMEFANTASIA") ILIKE :{token_param} OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :{singular_param} OR
+                immutable_unaccent("NOMEFANTASIA") ILIKE :{plural_param} OR
+                immutable_unaccent(group_description) ILIKE :{token_param} OR
+                immutable_unaccent(group_description) ILIKE :{singular_param} OR
+                immutable_unaccent(group_description) ILIKE :{plural_param}
+            )"""
+            
+            conditions.append(token_condition)
+        
+        # Combinar condições com AND (todos os tokens devem estar presentes)
+        where_clause = " AND ".join(conditions)
+        
+        # Construir a consulta SQL final
+        search_sql = text(f"""
             SELECT 
                 "CODPRD", 
                 "NOMEFANTASIA", 
@@ -140,23 +182,18 @@ async def tool_call(
             FROM 
                 products
             WHERE 
-                immutable_unaccent("NOMEFANTASIA") ILIKE :query_param OR
-                immutable_unaccent("NOMEFANTASIA") ILIKE :singular_param OR
-                immutable_unaccent("NOMEFANTASIA") ILIKE :plural_param OR
-                immutable_unaccent(group_description) ILIKE :query_param
+                {where_clause}
             ORDER BY 
+                CASE 
+                    WHEN immutable_unaccent("NOMEFANTASIA") ILIKE :{tokens[0] + '_exact'} THEN 1
+                    ELSE 2
+                END,
                 "NOMEFANTASIA" ASC
             LIMIT :page_size OFFSET :offset
         """)
         
-        # Parâmetros para a busca
-        search_params = {
-            "query_param": f"%{query_text}%",
-            "singular_param": f"%{singular_form}%",
-            "plural_param": f"%{plural_form}%",
-            "page_size": page_size,
-            "offset": offset
-        }
+        # Adicionar parâmetro para ordenação exata
+        search_params[tokens[0] + '_exact'] = tokens[0]
         
         # Executar a busca
         results = db.execute(search_sql, search_params).fetchall()
