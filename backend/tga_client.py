@@ -92,8 +92,8 @@ def sync_groups(db: Session):
 
 def sync_products(db: Session):
     """
-    Sincroniza os produtos da API TGA para o banco de dados local.
-    Busca todos os produtos, lidando com paginação.
+    Sincroniza os produtos da API TGA para o banco de dados local,
+    incluindo a remoção de produtos que não existem mais na API de origem.
     """
     if not API_BASE or not API_KEY:
         logger.error("[ERRO PRODUTOS] As variáveis de ambiente da API TGA não estão configuradas.")
@@ -101,79 +101,87 @@ def sync_products(db: Session):
 
     logger.info("▶️ Iniciando sincronização COMPLETA de produtos...")
     
-    # 1. Carregar todos os grupos do banco de dados para um mapa.
-    group_map = {group.CODGRUPO: group.DESCRICAO for group in db.query(ProductGroup).all()}
-    logger.info(f"Mapa com {len(group_map)} grupos carregado do banco de dados.")
-
-    total_products = 0
-    page = 1
-    
     try:
+        # --- ETAPA 1: Obter todos os códigos de produto da API TGA ---
+        all_tga_product_codes = set()
+        page = 1
+        limit = 500  # Aumentar o limite para buscar mais códigos por vez
+        logger.info("Buscando todos os códigos de produto da API TGA...")
         with httpx.Client() as client:
             while True:
-                logger.info(f"Buscando produtos da TGA: página {page}...")
                 response = client.get(
                     f"{API_BASE}/v1/produtos",
-                    headers={"X-API-Key": API_KEY},
-                    params={"page": page, "limit": 100},
+                    headers=HEADERS,
+                    params={"page": page, "limit": limit, "fields": "CODPRD"}, # Busca apenas o campo necessário
+                    timeout=60.0,
+                )
+                response.raise_for_status()
+                items = response.json().get("data", {}).get("items", [])
+                
+                if not items:
+                    break
+                
+                for item in items:
+                    all_tga_product_codes.add(item['CODPRD'])
+                
+                page += 1
+        logger.info(f"Encontrados {len(all_tga_product_codes)} produtos na API TGA.")
+
+        # --- ETAPA 2: Obter todos os códigos de produto do banco de dados local ---
+        local_product_codes = {p.CODPRD for p in db.query(Product.CODPRD).all()}
+        logger.info(f"Encontrados {len(local_product_codes)} produtos no banco de dados local.")
+
+        # --- ETAPA 3: Determinar produtos a serem excluídos ---
+        products_to_delete = local_product_codes - all_tga_product_codes
+        if products_to_delete:
+            logger.info(f"Deletando {len(products_to_delete)} produtos que não existem mais na TGA...")
+            db.query(Product).filter(Product.CODPRD.in_(products_to_delete)).delete(synchronize_session=False)
+            db.commit()
+        else:
+            logger.info("Nenhum produto para deletar.")
+
+        # --- ETAPA 4: Sincronizar (adicionar/atualizar) produtos ---
+        group_map = {group.CODGRUPO: group.DESCRICAO for group in db.query(ProductGroup).all()}
+        logger.info(f"Mapa com {len(group_map)} grupos carregado. Iniciando upsert...")
+        
+        total_products_synced = 0
+        page = 1
+        limit = 100 # Reduzir limite para a carga completa de dados
+        with httpx.Client() as client:
+            while True:
+                logger.info(f"Buscando e atualizando produtos da TGA: página {page}...")
+                response = client.get(
+                    f"{API_BASE}/v1/produtos",
+                    headers=HEADERS,
+                    params={"page": page, "limit": limit},
                     timeout=30.0,
                 )
                 response.raise_for_status()
-                data = response.json()
-
-                # Lógica robusta para extrair a lista de itens
-                items = []
-                if isinstance(data, dict):
-                    # Estrutura esperada: {"items": [...]} ou {"data": {"items": [...]}}
-                    if "items" in data:
-                        items = data.get("items", [])
-                    elif "data" in data and isinstance(data.get("data"), dict):
-                        items = data.get("data", {}).get("items", [])
-                elif isinstance(data, list):
-                    # Estrutura alternativa: API retorna uma lista crua [...]
-                    items = data
+                items = response.json().get("data", {}).get("items", [])
 
                 if not items:
-                    logger.info(f"✅ Sincronização bem-sucedida. {total_products} produtos no total foram sincronizados.")
+                    logger.info(f"✅ Sincronização bem-sucedida. {total_products_synced} produtos foram adicionados/atualizados.")
                     break
 
-                products_to_upsert = []
                 for item in items:
-                    price1 = item.get("PRECO1") if item.get("PRECO1") is not None else 0.0
-                    price2 = item.get("PRECO2") if item.get("PRECO2") is not None else 0.0
-
-                    # Mapeamento explícito para evitar erros com campos inesperados da API
                     product_data = {
                         "CODPRD": item.get("CODPRD"),
                         "NOMEFANTASIA": item.get("NOMEFANTASIA"),
-                        "PRECO1": price1,
-                        "PRECO2": price2,
+                        "PRECO1": item.get("PRECO1", 0.0),
+                        "PRECO2": item.get("PRECO2", 0.0),
                         "CODGRUPO": item.get("CODGRUPO"),
                         "group_description": group_map.get(item.get("CODGRUPO"), "")
                     }
-                    products_to_upsert.append(product_data)
-                
-                # Otimização: Fazer upsert em lote para a página atual
-                if products_to_upsert:
-                    for p_data in products_to_upsert:
-                        existing_product = db.query(Product).filter(Product.CODPRD == p_data['CODPRD']).first()
-                        if existing_product:
-                            existing_product.NOMEFANTASIA = p_data['NOMEFANTASIA']
-                            existing_product.PRECO1 = p_data['PRECO1']
-                            existing_product.PRECO2 = p_data['PRECO2']
-                            existing_product.CODGRUPO = p_data['CODGRUPO']
-                            existing_product.group_description = p_data['group_description']
-                        else:
-                            db.add(Product(**p_data))
-                    
-                    db.commit()
+                    db.merge(Product(**product_data))
 
-                total_products += len(products_to_upsert)
+                db.commit()
+                total_products_synced += len(items)
                 page += 1
     
     except httpx.RequestError as e:
         logger.warning(f"⚠️ [AVISO PRODUTOS] A API da TGA parece estar offline ou inacessível. Erro: {e}. A aplicação continuará usando os dados da última sincronização bem-sucedida.")
+        db.rollback()
     except Exception as e:
         logger.error(f"[ERRO PRODUTOS] Falha inesperada na sincronização: {e}")
-        db.rollback() # Garante que a transação seja desfeita em caso de erro
+        db.rollback()
         traceback.print_exc()

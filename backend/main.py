@@ -15,9 +15,11 @@ import os
 from dotenv import load_dotenv
 from unidecode import unidecode
 from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 # Importações locais corrigidas (sem o prefixo 'backend.')
-from models import get_engine, Product, get_db
+from models import get_engine, Product, get_db, SessionLocal
 from tga_client import sync_products, sync_groups
 
 # =============== LOGS EM FORMATO JSON ===============
@@ -40,6 +42,21 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 # ===================================================
 
+# Agendador para tarefas de sincronização
+scheduler = AsyncIOScheduler()
+
+def run_full_sync():
+    """Executa a sincronização completa de grupos e produtos."""
+    logger.info("--- Iniciando ciclo de sincronização agendada ---")
+    db = SessionLocal()
+    try:
+        sync_groups(db)
+        sync_products(db)
+    finally:
+        db.close()
+    logger.info("--- Ciclo de sincronização agendada finalizado ---")
+
+
 # Variáveis de Ambiente e Segurança
 SERVER_API_KEY = os.getenv("SERVER_API_KEY")
 API_KEY_HEADER = APIKeyHeader(name="X-API-KEY")
@@ -47,10 +64,29 @@ API_KEY_HEADER = APIKeyHeader(name="X-API-KEY")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Lógica de inicialização...
-    logging.info("Aplicação iniciada.")
+    logger.info("Iniciando a aplicação e o agendador de sincronização.")
+    
+    # Adiciona a tarefa de sincronização ao agendador
+    scheduler.add_job(
+        run_full_sync,
+        trigger=IntervalTrigger(minutes=30),
+        id="sync_job",
+        name="Sincronização TGA",
+        replace_existing=True
+    )
+    
+    # Inicia o agendador
+    scheduler.start()
+    
+    # Executa a primeira sincronização imediatamente de forma síncrona para garantir que os dados estejam disponíveis
+    logger.info("Executando a primeira sincronização na inicialização...")
+    run_full_sync()
+    
     yield
+    
     # Lógica de finalização...
-    logging.info("Aplicação encerrada.")
+    logger.info("Encerrando a aplicação e o agendador.")
+    scheduler.shutdown()
 
 # Cria a instância da aplicação FastAPI com o novo lifespan
 app = FastAPI(
