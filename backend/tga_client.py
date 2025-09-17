@@ -116,7 +116,8 @@ def sync_products(db: Session):
                     timeout=60.0,
                 )
                 response.raise_for_status()
-                items = response.json().get("data", {}).get("items", [])
+                # CORREÇÃO: A TGA retorna { "data": [...] } e não {"data": {"items": [...]}}
+                items = response.json().get("data", [])
                 
                 if not items:
                     break
@@ -157,7 +158,8 @@ def sync_products(db: Session):
                     timeout=30.0,
                 )
                 response.raise_for_status()
-                items = response.json().get("data", {}).get("items", [])
+                # CORREÇÃO: A TGA retorna { "data": [...] } e não {"data": {"items": [...]}}
+                items = response.json().get("data", [])
 
                 if not items:
                     logger.info(f"✅ Sincronização bem-sucedida. {total_products_synced} produtos foram adicionados/atualizados.")
