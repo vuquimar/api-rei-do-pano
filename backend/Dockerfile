@@ -21,6 +21,5 @@ EXPOSE 8080
 
 # Comando final para produção:
 # 1. Aplica as migrações do Alembic.
-# 2. Executa o script de pré-inicialização para a sincronização inicial.
-# 3. Inicia o servidor Gunicorn com 4 workers Uvicorn.
-CMD ["sh", "-c", "alembic upgrade head && python prestart.py && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
+# 2. Inicia o servidor Gunicorn com 4 workers Uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
