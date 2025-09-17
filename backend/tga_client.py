@@ -163,16 +163,37 @@ def sync_products(db: Session):
                     logger.info(f"✅ Sincronização bem-sucedida. {total_products_synced} produtos foram adicionados/atualizados.")
                     break
 
-                for item in items:
-                    product_data = {
-                        "CODPRD": item.get("CODPRD"),
-                        "NOMEFANTASIA": item.get("NOMEFANTASIA"),
-                        "PRECO1": item.get("PRECO1", 0.0),
-                        "PRECO2": item.get("PRECO2", 0.0),
-                        "CODGRUPO": item.get("CODGRUPO"),
-                        "group_description": group_map.get(item.get("CODGRUPO"), "")
+                # Mapeia os produtos da página atual para um dicionário
+                products_from_tga = {
+                    item.get("CODPRD"): item for item in items if item.get("CODPRD")
+                }
+                
+                # Busca em lote todos os produtos existentes no banco de dados para a página atual
+                existing_products = db.query(Product).filter(Product.CODPRD.in_(products_from_tga.keys())).all()
+                existing_products_map = {p.CODPRD: p for p in existing_products}
+
+                for codprd, item_data in products_from_tga.items():
+                    existing_product = existing_products_map.get(codprd)
+                    
+                    product_details = {
+                        "NOMEFANTASIA": item_data.get("NOMEFANTASIA"),
+                        "PRECO1": item_data.get("PRECO1", 0.0),
+                        "PRECO2": item_data.get("PRECO2", 0.0),
+                        "CODGRUPO": item_data.get("CODGRUPO"),
+                        "group_description": group_map.get(item_data.get("CODGRUPO"), "")
                     }
-                    db.merge(Product(**product_data))
+
+                    if existing_product:
+                        # Se o produto existe, atualiza os campos
+                        existing_product.NOMEFANTASIA = product_details["NOMEFANTASIA"]
+                        existing_product.PRECO1 = product_details["PRECO1"]
+                        existing_product.PRECO2 = product_details["PRECO2"]
+                        existing_product.CODGRUPO = product_details["CODGRUPO"]
+                        existing_product.group_description = product_details["group_description"]
+                    else:
+                        # Se não existe, cria um novo
+                        new_product = Product(CODPRD=codprd, **product_details)
+                        db.add(new_product)
 
                 db.commit()
                 total_products_synced += len(items)

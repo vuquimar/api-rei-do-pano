@@ -266,30 +266,3 @@ async def tool_call(
     except Exception as e:
         logger.error(f"Erro ao processar a busca: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erro interno ao processar a busca.")
-
-@app.get("/debug_find_product/{product_code}")
-async def debug_find_product(
-    product_code: str,
-    db: Session = Depends(get_db),
-    api_key: str = Depends(get_api_key)
-):
-    """
-    Endpoint de diagnóstico para verificar a existência de um produto pelo código exato.
-    Bypassa toda a lógica de busca complexa.
-    """
-    logger.info(f"DEBUG: Buscando produto pelo código exato: {product_code}")
-    product = db.query(Product).filter(Product.CODPRD == product_code).first()
-    
-    if not product:
-        logger.warning(f"DEBUG: Produto com código {product_code} não encontrado no banco de dados.")
-        raise HTTPException(status_code=404, detail=f"Produto com código {product_code} não encontrado.")
-    
-    logger.info(f"DEBUG: Produto encontrado: {product.NOMEFANTASIA}")
-    return {
-        "code": product.CODPRD,
-        "name": product.NOMEFANTASIA,
-        "price": product.PRECO2,
-        "price_cash": product.PRECO1,
-        "group_code": product.CODGRUPO,
-        "group_description": product.group_description
-    }
