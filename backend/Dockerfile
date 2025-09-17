@@ -21,6 +21,5 @@ EXPOSE 8080
 
 # Comando final para produção:
 # 1. Aplica as migrações do Alembic para garantir que o schema do DB está atualizado.
-# 2. Executa o script de sincronização de produtos de forma bloqueante (one-off).
-# 3. Inicia o servidor Gunicorn com 4 workers Uvicorn.
-CMD ["sh", "-c", "alembic upgrade head && python run_sync.py && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
+# 2. Inicia o servidor Gunicorn com 4 workers Uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8080"]
