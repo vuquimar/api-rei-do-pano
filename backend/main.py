@@ -66,21 +66,27 @@ async def lifespan(app: FastAPI):
     # Lógica de inicialização...
     logger.info("Iniciando a aplicação e o agendador de sincronização.")
     
-    # Adiciona a tarefa de sincronização ao agendador
+    # Adiciona a tarefa de sincronização recorrente ao agendador
     scheduler.add_job(
         run_full_sync,
         trigger=IntervalTrigger(minutes=30),
         id="sync_job",
-        name="Sincronização TGA",
+        name="Sincronização TGA Recorrente",
         replace_existing=True
     )
     
-    # Inicia o agendador
+    # Adiciona uma tarefa para rodar a sincronização uma vez, imediatamente após o início
+    scheduler.add_job(
+        run_full_sync,
+        id="initial_sync_job",
+        name="Sincronização TGA Imediata",
+        replace_existing=True
+    )
+    
+    # Inicia o agendador (que executa os jobs em background)
     scheduler.start()
     
-    # Executa a primeira sincronização imediatamente de forma síncrona para garantir que os dados estejam disponíveis
-    logger.info("Executando a primeira sincronização na inicialização...")
-    run_full_sync()
+    logger.info("Aplicação iniciada e pronta para receber requisições. A sincronização inicial foi agendada para rodar em segundo plano.")
     
     yield
     
