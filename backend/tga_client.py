@@ -11,6 +11,7 @@ import logging
 from typing import Optional
 from sqlalchemy.orm import Session
 import traceback
+import time
 
 load_dotenv()
 
@@ -33,6 +34,26 @@ def get_last_sync():
 def save_last_sync():
     with open(LAST_SYNC_FILE, "w") as f:
         json.dump({"last_sync": datetime.now(timezone.utc).isoformat()}, f)
+
+def get_tga_data_with_retry(url: str, params: dict, retries=3, delay=5):
+    """Faz uma requisição GET para a API TGA com lógica de retry."""
+    for attempt in range(retries):
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    url,
+                    headers=HEADERS,
+                    params=params,
+                    timeout=60.0,
+                )
+                response.raise_for_status()
+                return response.json().get("data", [])
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logger.warning(f"Tentativa {attempt + 1} de {retries} falhou: {e}. Tentando novamente em {delay}s...")
+            if attempt + 1 == retries:
+                logger.error(f"Todas as {retries} tentativas falharam. Abortando a requisição para {url}.")
+                raise
+            time.sleep(delay)
 
 def sync_groups(db: Session):
     """
@@ -105,27 +126,24 @@ def sync_products(db: Session):
         # --- ETAPA 1: Obter todos os códigos de produto da API TGA ---
         all_tga_product_codes = set()
         page = 1
-        limit = 500  # Aumentar o limite para buscar mais códigos por vez
+        limit = 100  # REDUZIDO: Diminuir o limite para evitar timeouts da TGA
         logger.info("Buscando todos os códigos de produto da API TGA...")
-        with httpx.Client() as client:
-            while True:
-                response = client.get(
-                    f"{API_BASE}/v1/produtos",
-                    headers=HEADERS,
-                    params={"page": page, "limit": limit, "fields": "CODPRD"}, # Busca apenas o campo necessário
-                    timeout=60.0,
-                )
-                response.raise_for_status()
-                # CORREÇÃO: A TGA retorna { "data": [...] } e não {"data": {"items": [...]}}
-                items = response.json().get("data", [])
-                
-                if not items:
-                    break
-                
-                for item in items:
+        
+        while True:
+            params = {"page": page, "limit": limit, "fields": "CODPRD"}
+            items = get_tga_data_with_retry(f"{API_BASE}/v1/produtos", params)
+            
+            if not items:
+                break
+            
+            for item in items:
+                # BLINDAGEM: Garante que o item é um dicionário e tem a chave esperada
+                if isinstance(item, dict) and 'CODPRD' in item:
                     all_tga_product_codes.add(item['CODPRD'])
-                
-                page += 1
+                else:
+                    logger.warning(f"Item malformado recebido da API TGA e ignorado: {item}")
+            
+            page += 1
         logger.info(f"Encontrados {len(all_tga_product_codes)} produtos na API TGA.")
 
         # --- ETAPA 2: Obter todos os códigos de produto do banco de dados local ---
@@ -147,22 +165,15 @@ def sync_products(db: Session):
         
         total_products_synced = 0
         page = 1
-        limit = 100 # Reduzir limite para a carga completa de dados
-        with httpx.Client() as client:
-            while True:
-                logger.info(f"Buscando e atualizando produtos da TGA: página {page}...")
-                response = client.get(
-                    f"{API_BASE}/v1/produtos",
-                    headers=HEADERS,
-                    params={"page": page, "limit": limit},
-                    timeout=30.0,
-                )
-                response.raise_for_status()
-                # CORREÇÃO: A TGA retorna { "data": [...] } e não {"data": {"items": [...]}}
-                items = response.json().get("data", [])
+        limit = 100 # Manter o limite consistente
+        
+        while True:
+            logger.info(f"Buscando e atualizando produtos da TGA: página {page}...")
+            params = {"page": page, "limit": limit}
+            items = get_tga_data_with_retry(f"{API_BASE}/v1/produtos", params)
 
-                if not items:
-                    logger.info(f"✅ Sincronização bem-sucedida. {total_products_synced} produtos foram adicionados/atualizados.")
+            if not items:
+                logger.info(f"✅ Sincronização bem-sucedida. {total_products_synced} produtos foram adicionados/atualizados.")
                     break
 
                 # Mapeia os produtos da página atual para um dicionário
