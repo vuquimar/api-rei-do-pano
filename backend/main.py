@@ -154,12 +154,19 @@ async def tool_call(
 
         # Prepara a query removendo stopwords para as buscas mais simples
         stopwords = {'e', 'de', 'da', 'do', 'das', 'dos', 'para', 'com', 'em', 'por', 'a', 'o', 'as', 'os', 'um', 'uma'}
-        clean_query = " ".join([t for t in query.lower().strip().split() if t not in stopwords])
+        clean_query_tokens = [t for t in query.lower().strip().split() if t not in stopwords]
+        clean_query = " ".join(clean_query_tokens)
+
         if not clean_query:
             clean_query = query # Fallback se a query só tiver stopwords
 
+        # Constrói a cláusula ILIKE para a nova camada de busca
+        ilike_conditions = " AND ".join(
+            [f"""immutable_unaccent("NOMEFANTASIA") ILIKE :word_{i}""" for i in range(len(clean_query_tokens))]
+        )
+
         # Estratégia de busca avançada em múltiplas camadas com ranking explícito
-        search_sql = text("""
+        search_sql = text(f"""
             WITH ranked_products AS (
                 -- Camada 1: Código exato (rank 1, score máximo)
                 SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 1 AS rank, 10.0 AS score
@@ -176,22 +183,29 @@ async def tool_call(
 
                 UNION ALL
 
-                -- Camada 3: ILIKE no início do nome (correspondência de prefixo, rank 3)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 0.5 AS score
+                -- Camada 3 (NOVA): Todas as palavras-chave com ILIKE (rank 3)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 0.8 AS score
+                FROM products
+                WHERE {ilike_conditions if ilike_conditions else 'FALSE'}
+
+                UNION ALL
+
+                -- Camada 4: ILIKE no início do nome (correspondência de prefixo, rank 4)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.5 AS score
                 FROM products
                 WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_start)
 
                 UNION ALL
 
-                -- Camada 4: ILIKE em qualquer parte do nome (rank 4)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.3 AS score
+                -- Camada 5: ILIKE em qualquer parte do nome (rank 5)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 AS rank, 0.3 AS score
                 FROM products
                 WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
 
                 UNION ALL
 
-                -- Camada 5: Similaridade para typos (fallback, rank 5)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 as rank,
+                -- Camada 6: Similaridade para typos (fallback, rank 6)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 6 as rank,
                        similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) as score
                 FROM products
                 WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) > 0.3
@@ -227,6 +241,10 @@ async def tool_call(
             "page_size": page_size,
             "offset": offset,
         }
+
+        # Adiciona os parâmetros para a nova camada de ILIKE
+        for i, token in enumerate(clean_query_tokens):
+            params[f'word_{i}'] = f"%%{token}%%"
 
         # Executar a busca
         results = db.execute(search_sql, params).fetchall()
