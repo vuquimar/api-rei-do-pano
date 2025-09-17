@@ -175,32 +175,32 @@ async def tool_call(
 
                 UNION ALL
 
-                -- Camada 2: Full-Text Search com websearch_to_tsquery (rank 2)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 2 AS rank,
+                -- Camada 2: Frase Exata (Literal) com ILIKE (rank 2, score alto)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 2 AS rank, 5.0 AS score
+                FROM products
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
+                
+                UNION ALL
+
+                -- Camada 3: Full-Text Search com websearch_to_tsquery (rank 3)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank,
                        ts_rank_cd(search_vector, websearch_to_tsquery('portuguese', :query)) AS score
                 FROM products
                 WHERE search_vector @@ websearch_to_tsquery('portuguese', :query)
 
                 UNION ALL
 
-                -- Camada 3 (NOVA): Todas as palavras-chave com ILIKE (rank 3)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 0.8 AS score
+                -- Camada 4 (NOVA): Todas as palavras-chave com ILIKE (rank 4)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.8 AS score
                 FROM products
                 WHERE {ilike_conditions if ilike_conditions else 'FALSE'}
 
                 UNION ALL
 
-                -- Camada 4: ILIKE no início do nome (correspondência de prefixo, rank 4)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.5 AS score
+                -- Camada 5: ILIKE no início do nome (correspondência de prefixo, rank 5)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 AS rank, 0.5 AS score
                 FROM products
                 WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_start)
-
-                UNION ALL
-
-                -- Camada 5: ILIKE em qualquer parte do nome (rank 5)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 AS rank, 0.3 AS score
-                FROM products
-                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
 
                 UNION ALL
 
@@ -208,7 +208,7 @@ async def tool_call(
                 SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 6 as rank,
                        similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) as score
                 FROM products
-                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) > 0.3
+                WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) > 0.15
             ),
             unique_products AS (
                 SELECT
@@ -266,3 +266,30 @@ async def tool_call(
     except Exception as e:
         logger.error(f"Erro ao processar a busca: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erro interno ao processar a busca.")
+
+@app.get("/debug_find_product/{product_code}")
+async def debug_find_product(
+    product_code: str,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key)
+):
+    """
+    Endpoint de diagnóstico para verificar a existência de um produto pelo código exato.
+    Bypassa toda a lógica de busca complexa.
+    """
+    logger.info(f"DEBUG: Buscando produto pelo código exato: {product_code}")
+    product = db.query(Product).filter(Product.CODPRD == product_code).first()
+    
+    if not product:
+        logger.warning(f"DEBUG: Produto com código {product_code} não encontrado no banco de dados.")
+        raise HTTPException(status_code=404, detail=f"Produto com código {product_code} não encontrado.")
+    
+    logger.info(f"DEBUG: Produto encontrado: {product.NOMEFANTASIA}")
+    return {
+        "code": product.CODPRD,
+        "name": product.NOMEFANTASIA,
+        "price": product.PRECO2,
+        "price_cash": product.PRECO1,
+        "group_code": product.CODGRUPO,
+        "group_description": product.group_description
+    }
