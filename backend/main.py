@@ -196,7 +196,7 @@ async def tool_call(
                 UNION ALL
 
                 -- Camada 5: Todas as palavras-chave com ILIKE
-                SELECT "CODPRD", "NOMEFANTasia", "PRECO1", "PRECO2", 5 AS rank, 0.8 AS score
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 AS rank, 0.8 AS score
                 FROM products
                 WHERE {ilike_conditions if ilike_conditions else 'FALSE'}
 

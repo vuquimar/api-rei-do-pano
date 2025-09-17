@@ -69,28 +69,28 @@ def sync_groups(db: Session):
     limit = 100
 
     try:
-        headers = {"X-API-Key": API_KEY}
-        endpoint = f"{API_BASE}/v1/grupos"
-
         while True:
             params = {"page": page, "limit": limit}
             logger.info(f"Buscando grupos da TGA: página {page}...")
             
-            response = httpx.get(endpoint, headers=headers, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json().get("data", [])
+            # Usa a função com retry
+            data = get_tga_data_with_retry(f"{API_BASE}/v1/grupos", params)
 
             if not data:
                 logger.info("Nenhum grupo novo encontrado. Finalizando busca na TGA.")
                 break
 
             for item in data:
-                group = ProductGroup(
-                    CODGRUPO=item["CODGRUPO"],
-                    DESCRICAO=item["DESCRICAO"],
-                )
-                db.merge(group)
-                total_count += 1
+                # Adiciona validação para o caso de dados malformados
+                if isinstance(item, dict) and "CODGRUPO" in item and "DESCRICAO" in item:
+                    group = ProductGroup(
+                        CODGRUPO=item["CODGRUPO"],
+                        DESCRICAO=item["DESCRICAO"],
+                    )
+                    db.merge(group)
+                    total_count += 1
+                else:
+                    logger.warning(f"Item de grupo malformado recebido da API TGA e ignorado: {item}")
 
             db.commit()
 
@@ -100,15 +100,11 @@ def sync_groups(db: Session):
 
         logger.info(f"✅ Sincronização de grupos bem-sucedida. {total_count} grupos sincronizados.")
 
-    except httpx.RequestError as e:
-        logger.warning(f"[AVISO GRUPOS] Não foi possível conectar à API TGA: {e}. O servidor continuará com os dados existentes.")
-        db.rollback()
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"[AVISO GRUPOS] Falha na chamada à API TGA: {e.response.status_code}. O servidor continuará com os dados existentes.")
-        db.rollback()
     except Exception as e:
-        logger.error(f"[ERRO GRUPOS] Falha inesperada na sincronização: {e}")
+        logger.error(f"[ERRO GRUPOS] Falha inesperada na sincronização de grupos: {e}", exc_info=True)
         db.rollback()
+        # Propaga o erro para o prestart.py poder capturar
+        raise
 
 
 def sync_products(db: Session):
