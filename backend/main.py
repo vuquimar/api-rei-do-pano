@@ -173,37 +173,44 @@ async def tool_call(
 
                 UNION ALL
 
-                -- Camada 2: Frase Exata (Literal) com ILIKE (rank 2, score alto)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 2 AS rank, 5.0 AS score
+                -- Camada 2: Nome exato (case-insensitive, accent-insensitive)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 2 AS rank, 8.0 AS score
+                FROM products
+                WHERE immutable_unaccent("NOMEFANTASIA") = immutable_unaccent(:query)
+
+                UNION ALL
+
+                -- Camada 3: Frase Exata (Literal) contida no nome com ILIKE
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 5.0 AS score
                 FROM products
                 WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
                 
                 UNION ALL
 
-                -- Camada 3: Full-Text Search com websearch_to_tsquery (rank 3)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank,
+                -- Camada 4: Full-Text Search com websearch_to_tsquery
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank,
                        ts_rank_cd(search_vector, websearch_to_tsquery('portuguese', :query)) AS score
                 FROM products
                 WHERE search_vector @@ websearch_to_tsquery('portuguese', :query)
 
                 UNION ALL
 
-                -- Camada 4 (NOVA): Todas as palavras-chave com ILIKE (rank 4)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 4 AS rank, 0.8 AS score
+                -- Camada 5: Todas as palavras-chave com ILIKE
+                SELECT "CODPRD", "NOMEFANTasia", "PRECO1", "PRECO2", 5 AS rank, 0.8 AS score
                 FROM products
                 WHERE {ilike_conditions if ilike_conditions else 'FALSE'}
 
                 UNION ALL
 
-                -- Camada 5: ILIKE no início do nome (correspondência de prefixo, rank 5)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 5 AS rank, 0.5 AS score
+                -- Camada 6: ILIKE no início do nome (prefixo)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 6 AS rank, 0.5 AS score
                 FROM products
                 WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_start)
 
                 UNION ALL
 
-                -- Camada 6: Similaridade para typos (fallback, rank 6)
-                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 6 as rank,
+                -- Camada 7: Similaridade para typos (fallback)
+                SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 7 as rank,
                        similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) as score
                 FROM products
                 WHERE similarity(immutable_unaccent("NOMEFANTASIA"), immutable_unaccent(:clean_query)) > 0.15
