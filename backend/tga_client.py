@@ -179,11 +179,6 @@ def sync_products(db: Session):
         logger.error("[ERRO PRODUTOS] Variáveis de ambiente da API TGA ausentes.")
         return
 
-    # Garante execução única entre múltiplos workers
-    if not acquire_sync_lock(db):
-        logger.info("Outro processo já está executando a sincronização (advisory lock não adquirido). Abortando esta execução.")
-        return
-
     logger.info("▶️ Iniciando sincronização COMPLETA de produtos...")
 
     try:
@@ -276,5 +271,20 @@ def sync_products(db: Session):
     except Exception as e:
         logger.error(f"[ERRO PRODUTOS] Falha inesperada na sincronização: {e}", exc_info=True)
         db.rollback()
+
+
+def run_full_sync_cycle() -> None:
+    """Executa um ciclo completo de sincronização com advisory lock (grupos+produtos)."""
+    db = SessionLocal()
+    try:
+        if not acquire_sync_lock(db):
+            logger.info("Outro processo já está executando a sincronização (lock não adquirido). Abortando.")
+            return
+        try:
+            sync_groups(db)
+            sync_products(db)
+            save_last_sync()
+        finally:
+            release_sync_lock(db)
     finally:
-        release_sync_lock(db)
+        db.close()
