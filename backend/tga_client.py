@@ -12,6 +12,7 @@ from typing import Optional, Tuple, List, Any
 from sqlalchemy.orm import Session
 import traceback
 import time
+from sqlalchemy import text as sa_text
 
 load_dotenv()
 
@@ -29,15 +30,15 @@ SYNC_LOCK_KEY = 823471  # chave arbitrária para pg_advisory_lock
 
 def acquire_sync_lock(db: Session) -> bool:
     try:
-        result = db.execute("SELECT pg_try_advisory_lock(:k)", {"k": SYNC_LOCK_KEY}).scalar()
+        result = db.execute(sa_text("SELECT pg_try_advisory_lock(:k)"), {"k": SYNC_LOCK_KEY}).scalar()
         return bool(result)
-    except Exception:
-        logger.warning("Não foi possível adquirir advisory lock; prosseguindo sem lock.")
-        return True
+    except Exception as e:
+        logger.warning(f"Falha ao adquirir advisory lock: {e}")
+        return False
 
 def release_sync_lock(db: Session) -> None:
     try:
-        db.execute("SELECT pg_advisory_unlock(:k)", {"k": SYNC_LOCK_KEY})
+        db.execute(sa_text("SELECT pg_advisory_unlock(:k)"), {"k": SYNC_LOCK_KEY})
     except Exception:
         pass
 
@@ -180,7 +181,7 @@ def sync_products(db: Session):
 
     # Garante execução única entre múltiplos workers
     if not acquire_sync_lock(db):
-        logger.info("Outro processo já está executando a sincronização. Abortando esta instância.")
+        logger.info("Outro processo já está executando a sincronização (advisory lock não adquirido). Abortando esta execução.")
         return
 
     logger.info("▶️ Iniciando sincronização COMPLETA de produtos...")
