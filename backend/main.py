@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 # Importações locais corrigidas (sem o prefixo 'backend.')
 from models import get_engine, Product, get_db, SessionLocal
 from tga_client import sync_products, sync_groups
+from tga_client import run_full_sync_cycle  # usa ciclo com advisory lock
 
 # =============== LOGS EM FORMATO JSON ===============
 class JSONFormatter(logging.Formatter):
@@ -48,12 +49,8 @@ scheduler = AsyncIOScheduler()
 def run_full_sync():
     """Executa a sincronização completa de grupos e produtos."""
     logger.info("--- Iniciando ciclo de sincronização agendada ---")
-    db = SessionLocal()
-    try:
-        sync_groups(db)
-        sync_products(db)
-    finally:
-        db.close()
+    # Passa a usar o ciclo com advisory lock
+    run_full_sync_cycle()
     logger.info("--- Ciclo de sincronização agendada finalizado ---")
 
 
