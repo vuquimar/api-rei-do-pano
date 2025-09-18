@@ -188,7 +188,7 @@ async def tool_call(
                 -- Camada 3: Frase Exata (Literal) contida no nome com ILIKE
                 SELECT "CODPRD", "NOMEFANTASIA", "PRECO1", "PRECO2", 3 AS rank, 5.0 AS score
                 FROM products
-                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any)
+                WHERE immutable_unaccent("NOMEFANTASIA") ILIKE immutable_unaccent(:query_like_any_literal)
                 
                 UNION ALL
 
@@ -247,7 +247,8 @@ async def tool_call(
             "clean_query": clean_query, # Query limpa para similaridade
             "query_code": query.upper(),
             "query_like_start": f"{clean_query}%",
-            "query_like_any": f"%%{clean_query}%%",
+            # Frase literal deve usar a query original, mantendo stopwords
+            "query_like_any_literal": f"%{query.strip()}%",
             "page_size": page_size,
             "offset": offset,
         }
